@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.example;
 
 import org.apache.http.HttpEntity;
@@ -7,16 +24,15 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.constants.ServiceUrlConstants;
-import org.keycloak.adapters.HttpClientBuilder;
 import org.keycloak.representations.AccessTokenResponse;
 import org.keycloak.representations.idm.RoleRepresentation;
-import org.keycloak.util.HostUtils;
 import org.keycloak.util.JsonSerialization;
-import org.keycloak.util.KeycloakUriBuilder;
-import org.keycloak.util.UriUtils;
+import org.keycloak.common.util.KeycloakUriBuilder;
+import org.keycloak.common.util.UriUtils;
 
 import javax.servlet.http.HttpServletRequest;
 import java.io.ByteArrayOutputStream;
@@ -70,16 +86,16 @@ public class AdminClient {
 
     public static AccessTokenResponse getToken(HttpServletRequest request) throws IOException {
 
-        HttpClient client = new HttpClientBuilder()
-                .disableTrustManager().build();
+        HttpClient client = new DefaultHttpClient();
 
 
         try {
-            HttpPost post = new HttpPost(KeycloakUriBuilder.fromUri(getBaseUrl(request) + "/auth")
-                    .path(ServiceUrlConstants.TOKEN_SERVICE_DIRECT_GRANT_PATH).build("demo"));
+            HttpPost post = new HttpPost(KeycloakUriBuilder.fromUri(getRequestOrigin(request) + "/auth")
+                    .path(ServiceUrlConstants.TOKEN_PATH).build("demo"));
             List <NameValuePair> formparams = new ArrayList <NameValuePair>();
             formparams.add(new BasicNameValuePair("username", "admin"));
             formparams.add(new BasicNameValuePair("password", "password"));
+            formparams.add(new BasicNameValuePair(OAuth2Constants.GRANT_TYPE, "password"));
             formparams.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, "admin-client"));
             UrlEncodedFormEntity form = new UrlEncodedFormEntity(formparams, "UTF-8");
             post.setEntity(form);
@@ -103,12 +119,11 @@ public class AdminClient {
 
     public static void logout(HttpServletRequest request, AccessTokenResponse res) throws IOException {
 
-        HttpClient client = new HttpClientBuilder()
-                .disableTrustManager().build();
+        HttpClient client = new DefaultHttpClient();
 
 
         try {
-            HttpPost post = new HttpPost(KeycloakUriBuilder.fromUri(getBaseUrl(request) + "/auth")
+            HttpPost post = new HttpPost(KeycloakUriBuilder.fromUri(UriUtils.getOrigin(request.getRequestURL().toString()) + "/auth")
                     .path(ServiceUrlConstants.TOKEN_SERVICE_LOGOUT_PATH)
                     .build("demo"));
             List<NameValuePair> formparams = new ArrayList<NameValuePair>();
@@ -134,10 +149,9 @@ public class AdminClient {
 
     public static List<RoleRepresentation> getRealmRoles(HttpServletRequest request, AccessTokenResponse res) throws Failure {
 
-        HttpClient client = new HttpClientBuilder()
-                .disableTrustManager().build();
+        HttpClient client = new DefaultHttpClient();
         try {
-            HttpGet get = new HttpGet(getBaseUrl(request) + "/auth/admin/realms/demo/roles");
+            HttpGet get = new HttpGet(UriUtils.getOrigin(request.getRequestURL().toString()) + "/auth/admin/realms/demo/roles");
             get.addHeader("Authorization", "Bearer " + res.getToken());
             try {
                 HttpResponse response = client.execute(get);
@@ -159,13 +173,8 @@ public class AdminClient {
         }
     }
 
-    public static String getBaseUrl(HttpServletRequest request) {
-        String useHostname = request.getServletContext().getInitParameter("useHostname");
-        if (useHostname != null && "true".equalsIgnoreCase(useHostname)) {
-            return "http://" + HostUtils.getHostName() + ":8080";
-        } else {
-            return UriUtils.getOrigin(request.getRequestURL().toString());
-        }
+    public static String getRequestOrigin(HttpServletRequest request) {
+        return UriUtils.getOrigin(request.getRequestURL().toString());
     }
 
 }

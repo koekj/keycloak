@@ -1,7 +1,25 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.services.resources.admin;
 
 import org.keycloak.models.AdminRoles;
-import org.keycloak.models.ApplicationModel;
+import org.keycloak.models.ClientModel;
+import org.keycloak.models.ImpersonationConstants;
 import org.keycloak.services.ForbiddenException;
 
 
@@ -13,13 +31,13 @@ public class RealmAuth {
     private Resource resource;
 
     public enum Resource {
-        APPLICATION, CLIENT, USER, REALM, EVENTS
+        CLIENT, USER, REALM, EVENTS, IDENTITY_PROVIDER, IMPERSONATION
     }
 
     private AdminAuth auth;
-    private ApplicationModel realmAdminApp;
+    private ClientModel realmAdminApp;
 
-    public RealmAuth(AdminAuth auth, ApplicationModel realmAdminApp) {
+    public RealmAuth(AdminAuth auth, ClientModel realmAdminApp) {
         this.auth = auth;
         this.realmAdminApp = realmAdminApp;
     }
@@ -27,6 +45,10 @@ public class RealmAuth {
     public RealmAuth init(Resource resource) {
         this.resource = resource;
         return this;
+    }
+
+    public AdminAuth getAuth() {
+        return auth;
     }
 
     public void requireAny() {
@@ -57,8 +79,6 @@ public class RealmAuth {
 
     private String getViewRole(Resource resource) {
         switch (resource) {
-            case APPLICATION:
-                return AdminRoles.VIEW_APPLICATIONS;
             case CLIENT:
                 return AdminRoles.VIEW_CLIENTS;
             case USER:
@@ -67,6 +87,8 @@ public class RealmAuth {
                 return AdminRoles.VIEW_REALM;
             case EVENTS:
                 return AdminRoles.VIEW_EVENTS;
+            case IDENTITY_PROVIDER:
+                return AdminRoles.VIEW_IDENTITY_PROVIDERS;
             default:
                 throw new IllegalStateException();
         }
@@ -74,8 +96,6 @@ public class RealmAuth {
 
     private String getManageRole(Resource resource) {
         switch (resource) {
-            case APPLICATION:
-                return AdminRoles.MANAGE_APPLICATIONS;
             case CLIENT:
                 return AdminRoles.MANAGE_CLIENTS;
             case USER:
@@ -84,6 +104,10 @@ public class RealmAuth {
                 return AdminRoles.MANAGE_REALM;
             case EVENTS:
                 return AdminRoles.MANAGE_EVENTS;
+            case IDENTITY_PROVIDER:
+                return AdminRoles.MANAGE_IDENTITY_PROVIDERS;
+            case IMPERSONATION:
+                return ImpersonationConstants.IMPERSONATION_ROLE;
             default:
                 throw new IllegalStateException();
         }

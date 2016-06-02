@@ -1,23 +1,18 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2012, Red Hat, Inc., and individual contributors
- * as indicated by the @author tags. See the copyright.txt file in the
- * distribution for a full listing of individual contributors.
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.keycloak.testsuite.adapter;
 
@@ -26,34 +21,25 @@ import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.OAuth2Constants;
-import org.keycloak.models.ApplicationModel;
+import org.keycloak.admin.client.Keycloak;
 import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
-import org.keycloak.models.UserModel;
-import org.keycloak.models.UserSessionModel;
-import org.keycloak.protocol.oidc.OpenIDConnectService;
-import org.keycloak.protocol.oidc.TokenManager;
-import org.keycloak.representations.AccessToken;
+import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.services.managers.RealmManager;
-import org.keycloak.services.resources.admin.AdminRoot;
 import org.keycloak.testsuite.OAuthClient;
 import org.keycloak.testsuite.pages.LoginPage;
 import org.keycloak.testsuite.rule.AbstractKeycloakRule;
 import org.keycloak.testsuite.rule.WebResource;
 import org.keycloak.testsuite.rule.WebRule;
-import org.keycloak.testutils.KeycloakServer;
+import org.keycloak.testsuite.KeycloakServer;
 import org.openqa.selenium.WebDriver;
 
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
-import javax.ws.rs.client.WebTarget;
-import javax.ws.rs.core.GenericType;
-import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.UriBuilder;
 import java.net.URL;
 import java.security.PublicKey;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -66,7 +52,7 @@ import java.util.Map;
  */
 public class RelativeUriAdapterTest {
 
-    public static final String LOGIN_URL = OpenIDConnectService.loginPageUrl(UriBuilder.fromUri("http://localhost:8081/auth")).build("demo").toString();
+    public static final String LOGIN_URL = OIDCLoginProtocolService.authUrl(UriBuilder.fromUri("http://localhost:8081/auth")).build("demo").toString();
     public static PublicKey realmPublicKey;
     @ClassRule
     public static AbstractKeycloakRule keycloakRule = new AbstractKeycloakRule(){
@@ -78,22 +64,25 @@ public class RelativeUriAdapterTest {
             realmPublicKey = realm.getPublicKey();
 
             URL url = getClass().getResource("/adapter-test/cust-app-keycloak-relative.json");
-            deployApplication("customer-portal", "/customer-portal", CustomerServlet.class, url.getPath(), "user");
-            url = getClass().getResource("/adapter-test/customer-db-keycloak-relative.json");
-            deployApplication("customer-db", "/customer-db", CustomerDatabaseServlet.class, url.getPath(), "user");
-            url = getClass().getResource("/adapter-test/product-keycloak-relative.json");
-            deployApplication("product-portal", "/product-portal", ProductServlet.class, url.getPath(), "user");
-            ApplicationModel adminConsole = adminRealm.getApplicationByName(Constants.ADMIN_CONSOLE_APPLICATION);
-            TokenManager tm = new TokenManager();
-            UserModel admin = session.users().getUserByUsername("admin", adminRealm);
-            UserSessionModel userSession = session.sessions().createUserSession(adminRealm, admin, "user", null, "form", false);
-            AccessToken token = tm.createClientAccessToken(tm.getAccess(null, adminConsole, admin), adminRealm, adminConsole, admin, userSession);
-            adminToken = tm.encodeToken(adminRealm, token);
+            createApplicationDeployment()
+                    .name("customer-portal").contextPath("/customer-portal")
+                    .servletClass(CustomerServlet.class).adapterConfigPath(url.getPath())
+                    .role("user").deployApplication();
 
+            url = getClass().getResource("/adapter-test/customer-db-keycloak-relative.json");
+            createApplicationDeployment()
+                    .name("customer-db").contextPath("/customer-db")
+                    .servletClass(CustomerDatabaseServlet.class).adapterConfigPath(url.getPath())
+                    .role("user")
+                    .errorPage(null).deployApplication();
+
+            url = getClass().getResource("/adapter-test/product-keycloak-relative.json");
+            createApplicationDeployment()
+                    .name("product-portal").contextPath("/product-portal")
+                    .servletClass(ProductServlet.class).adapterConfigPath(url.getPath())
+                    .role("user").deployApplication();
         }
     };
-
-    public static String adminToken;
 
     @Rule
     public WebRule webRule = new WebRule(this);
@@ -111,43 +100,34 @@ public class RelativeUriAdapterTest {
     public void testLoginSSOAndLogout() throws Exception {
         // test login to customer-portal which does a bearer request to customer-db
         driver.navigate().to("http://localhost:8081/customer-portal");
-        System.out.println("Current url: " + driver.getCurrentUrl());
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
         loginPage.login("bburke@redhat.com", "password");
-        System.out.println("Current url: " + driver.getCurrentUrl());
         Assert.assertEquals(driver.getCurrentUrl(), "http://localhost:8081/customer-portal");
         String pageSource = driver.getPageSource();
-        System.out.println(pageSource);
         Assert.assertTrue(pageSource.contains("Bill Burke") && pageSource.contains("Stian Thorgersen"));
 
         // test SSO
         driver.navigate().to("http://localhost:8081/product-portal");
         Assert.assertEquals(driver.getCurrentUrl(), "http://localhost:8081/product-portal");
         pageSource = driver.getPageSource();
-        System.out.println(pageSource);
         Assert.assertTrue(pageSource.contains("iPhone") && pageSource.contains("iPad"));
 
         // View stats
-        Client client = ClientBuilder.newClient();
-        UriBuilder authBase = UriBuilder.fromUri("http://localhost:8081/auth");
-        WebTarget adminTarget = client.target(AdminRoot.realmsUrl(authBase)).path("demo");
-        Map<String, Integer> stats = adminTarget.path("application-session-stats").request()
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
-                .get(new GenericType<Map<String, Integer>>(){});
-
-        Integer custSessionsCount = stats.get("customer-portal");
-        Assert.assertNotNull(custSessionsCount);
-        Assert.assertTrue(1 == custSessionsCount);
-        Integer prodStatsCount = stats.get("product-portal");
-        Assert.assertNotNull(prodStatsCount);
-        Assert.assertTrue(1 == prodStatsCount);
-
-        client.close();
-
+        List<Map<String, String>> stats = Keycloak.getInstance("http://localhost:8081/auth", "master", "admin", "admin", Constants.ADMIN_CLI_CLIENT_ID).realm("demo").getClientSessionStats();
+        Map<String, String> customerPortalStats = null;
+        Map<String, String> productPortalStats = null;
+        for (Map<String, String> s : stats) {
+            if (s.get("clientId").equals("customer-portal")) {
+                customerPortalStats = s;
+            } else if (s.get("clientId").equals("product-portal")) {
+                productPortalStats = s;
+            }
+        }
+        Assert.assertEquals(1, Integer.parseInt(customerPortalStats.get("active")));
+        Assert.assertEquals(1, Integer.parseInt(productPortalStats.get("active")));
 
         // test logout
-
-        String logoutUri = OpenIDConnectService.logoutUrl(UriBuilder.fromUri("http://localhost:8081/auth"))
+        String logoutUri = OIDCLoginProtocolService.logoutUrl(UriBuilder.fromUri("http://localhost:8081/auth"))
                 .queryParam(OAuth2Constants.REDIRECT_URI, "/customer-portal").build("demo").toString();
         driver.navigate().to(logoutUri);
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
@@ -155,8 +135,6 @@ public class RelativeUriAdapterTest {
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
         driver.navigate().to("http://localhost:8081/customer-portal");
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
-
-
     }
 
     @Test

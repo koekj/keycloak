@@ -2,8 +2,10 @@
     "realm": "test-realm",
     "enabled": true,
     "accessTokenLifespan": 6000,
+    "accessTokenLifespanForImplicitFlow": 1500,
     "accessCodeLifespan": 30,
     "accessCodeLifespanUserAction": 600,
+    "offlineSessionIdleTimeout": 3600000,
     "requiredCredentials": [ "password" ],
     "defaultRoles": [ "foo", "bar" ],
     "verifyEmail" : "true",
@@ -15,21 +17,39 @@
     "identityProviders" : [
         {
             "providerId" : "google",
-            "name" : "Google",
+            "alias" : "google1",
             "enabled": true,
             "config": {
-                "clientId": "clientId",
-                "clientSecret": "clientSecret"
+                "clientId": "googleId",
+                "clientSecret": "googleSecret"
             }
         }
     ],
     "userFederationProviders": [
         {
-            "displayName": "MyLDAPProvider",
-            "providerName": "dummy",
+            "displayName": "MyLDAPProvider1",
+            "providerName": "ldap",
             "priority": 1,
             "config": {
-                "important.config": "ldap://foo"
+                "connectionUrl": "ldap://foo"
+            }
+        },
+        {
+            "displayName": "MyLDAPProvider2",
+            "providerName": "ldap",
+            "priority": 2,
+            "config": {
+                "connectionUrl": "ldap://bar"
+            }
+        }
+    ],
+    "userFederationMappers": [
+        {
+            "name": "FullNameMapper",
+            "federationProviderDisplayName": "MyLDAPProvider1",
+            "federationMapperType": "full-name-ldap-mapper",
+            "config": {
+                "ldap.full.name.attribute": "cn"
             }
         }
     ],
@@ -37,6 +57,7 @@
         {
             "username": "wburke",
             "enabled": true,
+            "createdTimestamp" : 123654,
             "attributes": {
                 "email": "bburke@redhat.com"
             },
@@ -53,6 +74,7 @@
         },
         {
             "username": "loginclient",
+            "createdTimestamp" : "123655",
             "enabled": true,
             "credentials": [
                 {
@@ -64,6 +86,15 @@
         {
             "username": "admin",
             "enabled": true,
+            "attributes": {
+                "key1": [
+                    "val1"
+                ],
+                "key2": [
+                    "val21",
+                    "val22"
+                ]
+            },
             "credentials": [
                 {
                     "type": "password",
@@ -74,7 +105,23 @@
             "applicationRoles": {
                 "Application": [ "app-admin" ],
                 "OtherApp": [  "otherapp-admin" ]
-            }
+            },
+            "clientConsents": [
+                {
+                    "clientId": "Application",
+                    "grantedRealmRoles": [ "admin" ],
+                    "grantedClientRoles": {
+                        "Application": [ "app-admin" ]
+                    }
+                },
+                {
+                    "clientId": "OtherApp",
+                    "grantedRealmRoles": [ "admin" ],
+                    "grantedProtocolMappers": {
+                        "openid-connect": [ "gss delegation credential" ]
+                    }
+                }
+            ]
         },
         {
             "username": "mySocialUser",
@@ -96,12 +143,20 @@
                     "userName": "mySocialUser@gmail.com"
                 }
             ]
+        },
+        {
+            "username": "my-service-user",
+            "enabled": true,
+            "serviceAccountClientId": "OtherApp"
         }
     ],
-    "applications": [
+    "clients": [
         {
-            "name": "Application",
+            "clientId": "Application",
+            "name": "Applicationn",
             "enabled": true,
+            "implicitFlowEnabled": true,
+            "directAccessGrantsEnabled": true,
             "nodeReRegistrationTimeout": 50,
             "registeredNodes": {
                 "node1": 10,
@@ -109,16 +164,57 @@
             }
         },
         {
-            "name": "OtherApp",
-            "enabled": true
+            "clientId": "OtherApp",
+            "name": "Other Application",
+            "enabled": true,
+            "standardFlowEnabled": false,
+            "directAccessGrantsEnabled": false,
+            "serviceAccountsEnabled": true,
+            "clientAuthenticatorType": "client-jwt",
+            "protocolMappers" : [
+                {
+                    "name" : "gss delegation credential",
+                    "protocol" : "openid-connect",
+                    "protocolMapper" : "oidc-usersessionmodel-note-mapper",
+                    "consentRequired" : true,
+                    "consentText" : "gss delegation credential",
+                    "config" : {
+                        "user.session.note" : "gss_delegation_credential",
+                        "access.token.claim" : "true",
+                        "claim.name" : "gss_delegation_credential",
+                        "Claim JSON Type" : "String"
+                    }
+                }
+            ]
         }
-
     ],
     "oauthClients" : [
         {
             "name" : "oauthclient",
             "enabled": true,
             "secret": "clientpassword"
+        }
+    ],
+    "clientTemplates" : [
+        {
+            "name" : "foo-template",
+            "description" : "foo-template-desc",
+            "protocol" : "openid-connect",
+            "protocolMappers" : [
+                {
+                    "name" : "gss delegation credential",
+                    "protocol" : "openid-connect",
+                    "protocolMapper" : "oidc-usersessionmodel-note-mapper",
+                    "consentRequired" : true,
+                    "consentText" : "gss delegation credential",
+                    "config" : {
+                        "user.session.note" : "gss_delegation_credential",
+                        "access.token.claim" : "true",
+                        "claim.name" : "gss_delegation_credential",
+                        "Claim JSON Type" : "String"
+                    }
+                }
+            ]
         }
     ],
     "roles" : {
@@ -130,7 +226,8 @@
         "application" : {
             "Application" : [
                 {
-                    "name": "app-admin"
+                    "name": "app-admin",
+                    "scopeParamRequired": true
                 },
                 {
                     "name": "app-user"
@@ -138,7 +235,8 @@
             ],
             "OtherApp" : [
                 {
-                    "name": "otherapp-admin"
+                    "name": "otherapp-admin",
+                    "scopeParamRequired": false
                 },
                 {
                     "name": "otherapp-user"
@@ -150,6 +248,10 @@
         {
             "client": "oauthclient",
             "roles": ["admin"]
+        },
+        {
+            "clientTemplate": "foo-template",
+            "roles": ["admin"]
         }
     ],
     "applicationScopeMappings": {
@@ -157,6 +259,10 @@
             {
                 "client": "oauthclient",
                 "roles": ["app-user"]
+            },
+            {
+                "clientTemplate": "foo-template",
+                "roles": ["app-user", "app-admin" ]
             }
         ]
 

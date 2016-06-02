@@ -1,23 +1,18 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2012, Red Hat, Inc., and individual contributors
- * as indicated by the @author tags. See the copyright.txt file in the
- * distribution for a full listing of individual contributors.
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.keycloak.testsuite;
 
@@ -66,6 +61,7 @@ public class Jetty9Test {
         File base = new File(dir.getFile()).getParentFile();
         list.add(new WebAppContext(new File(base, "customer-portal").toString(), "/customer-portal"));
         list.add(new WebAppContext(new File(base, "customer-db").toString(), "/customer-db"));
+        list.add(new WebAppContext(new File(base, "customer-db-error-page").toString(), "/customer-db-error-page"));
         list.add(new WebAppContext(new File(base, "product-portal").toString(), "/product-portal"));
         list.add(new WebAppContext(new File(base, "session-portal").toString(), "/session-portal"));
         list.add(new WebAppContext(new File(base, "input-portal").toString(), "/input-portal"));
@@ -84,8 +80,11 @@ public class Jetty9Test {
 
     @AfterClass
     public static void shutdownJetty() throws Exception {
-        server.stop();
-        server.destroy();
+        try {
+            server.stop();
+            server.destroy();
+            Thread.sleep(100);
+        } catch (Exception e) {}
     }
 
     @Rule
@@ -132,6 +131,15 @@ public class Jetty9Test {
     }
 
     /**
+     * KEYCLOAK-1368
+     * @throws Exception
+     */
+    @Test
+    public void testNullBearerTokenCustomErrorPage() throws Exception {
+        testStrategy.testNullBearerTokenCustomErrorPage();
+    }
+
+    /**
      * KEYCLOAK-518
      * @throws Exception
      */
@@ -171,5 +179,13 @@ public class Jetty9Test {
     @Test
     public void testAdminApplicationLogout() throws Throwable {
         testStrategy.testAdminApplicationLogout();
+    }
+
+    /**
+     * KEYCLOAK-1216
+     */
+    @Test
+    public void testAccountManagementSessionsLogout() throws Throwable {
+        testStrategy.testAccountManagementSessionsLogout();
     }
 }

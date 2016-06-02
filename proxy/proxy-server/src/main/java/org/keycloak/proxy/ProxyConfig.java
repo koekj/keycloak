@@ -1,12 +1,26 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.proxy;
 
-import org.codehaus.jackson.annotate.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.keycloak.representations.adapters.config.AdapterConfig;
 
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -41,6 +55,8 @@ public class ProxyConfig {
     protected boolean sendAccessToken;
     @JsonProperty("applications")
     protected List<Application> applications = new LinkedList<Application>();
+    @JsonProperty("header-names")
+    private Map<String,String> headerNames = new HashMap<>();
 
     public String getBindAddress() {
         return bindAddress;
@@ -154,6 +170,14 @@ public class ProxyConfig {
         this.sendAccessToken = sendAccessToken;
     }
 
+    public void setHeaderNames(Map<String, String> headerNames) {
+        this.headerNames = headerNames;
+    }
+
+    public Map<String, String> getHeaderNames() {
+        return headerNames;
+    }
+
     public static class Application {
         @JsonProperty("base-path")
         protected String basePath;
@@ -161,6 +185,8 @@ public class ProxyConfig {
         protected AdapterConfig adapterConfig;
         @JsonProperty("error-page")
         protected String errorPage;
+        @JsonProperty("proxy-address-forwarding")
+        protected boolean proxyAddressForwarding;
         @JsonProperty("constraints")
         protected List<Constraint> constraints = new LinkedList<Constraint>();
 
@@ -187,6 +213,14 @@ public class ProxyConfig {
         public void setErrorPage(String errorPage) {
             this.errorPage = errorPage;
         }
+		
+        public boolean isProxyAddressForwarding() {
+            return proxyAddressForwarding;
+        }
+
+        public void setProxyAddressForwarding(boolean proxyAddressForwarding) {
+            this.proxyAddressForwarding = proxyAddressForwarding;
+        }
 
         public List<Constraint> getConstraints() {
             return constraints;
@@ -212,6 +246,8 @@ public class ProxyConfig {
         protected boolean permit;
         @JsonProperty("authenticate")
         protected boolean authenticate;
+        @JsonProperty("permit-and-inject")
+        protected boolean permitAndInject;
 
         public String getPattern() {
             return pattern;
@@ -251,6 +287,14 @@ public class ProxyConfig {
 
         public void setAuthenticate(boolean authenticate) {
             this.authenticate = authenticate;
+        }
+
+        public boolean isPermitAndInject() {
+            return permitAndInject;
+        }
+
+        public void setPermitAndInject(boolean permitAndInject) {
+            this.permitAndInject = permitAndInject;
         }
 
         public Set<String> getMethods() {

@@ -1,12 +1,12 @@
 /*
- * Copyright 2014 Red Hat Inc. and/or its affiliates and other contributors
- * as indicated by the @author tags. All rights reserved.
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,14 +23,14 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
-import org.keycloak.protocol.oidc.OpenIDConnectService;
+import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.testsuite.pages.LoginPage;
 import org.keycloak.testsuite.rule.AbstractKeycloakRule;
 import org.keycloak.testsuite.rule.WebResource;
 import org.keycloak.testsuite.rule.WebRule;
-import org.keycloak.testutils.KeycloakServer;
+import org.keycloak.testsuite.KeycloakServer;
 import org.openqa.selenium.WebDriver;
 
 /**
@@ -57,7 +57,11 @@ public class MultiTenancyTest {
             RealmRepresentation tenant2 = KeycloakServer.loadJson(getClass().getResourceAsStream("/adapter-test/tenant2-realm.json"), RealmRepresentation.class);
             manager.importRealm(tenant2);
 
-            deployApplication("multi-tenant", "/multi-tenant", MultiTenantServlet.class, null, "user", true, MultiTenantResolver.class);
+            createApplicationDeployment()
+                    .name("multi-tenant").contextPath("/multi-tenant")
+                    .servletClass(MultiTenantServlet.class)
+                    .role("user")
+                    .keycloakConfigResolver(MultiTenantResolver.class).deployApplication();
         }
 
         protected String[] getTestRealms() {
@@ -126,7 +130,7 @@ public class MultiTenancyTest {
     }
 
     private void doTenantRequests(String tenant, boolean logout) {
-        String tenantLoginUrl = OpenIDConnectService.loginPageUrl(UriBuilder.fromUri("http://localhost:8081/auth")).build(tenant).toString();
+        String tenantLoginUrl = OIDCLoginProtocolService.authUrl(UriBuilder.fromUri("http://localhost:8081/auth")).build(tenant).toString();
 
         driver.navigate().to("http://localhost:8081/multi-tenant?realm="+tenant);
         System.out.println("Current url: " + driver.getCurrentUrl());

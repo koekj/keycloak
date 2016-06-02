@@ -1,19 +1,28 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.keycloak.services.managers;
 
-import org.jboss.logging.Logger;
 import org.keycloak.Config;
-import org.keycloak.enums.SslRequired;
-import org.keycloak.models.AdminRoles;
-import org.keycloak.models.ApplicationModel;
-import org.keycloak.models.Constants;
-import org.keycloak.models.KeycloakSession;
-import org.keycloak.models.KeycloakSessionFactory;
-import org.keycloak.models.RealmModel;
-import org.keycloak.models.RoleModel;
-import org.keycloak.models.UserCredentialModel;
-import org.keycloak.models.UserModel;
+import org.keycloak.common.Version;
+import org.keycloak.common.enums.SslRequired;
+import org.keycloak.models.*;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.representations.idm.CredentialRepresentation;
+import org.keycloak.services.ServicesLogger;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -21,58 +30,74 @@ import org.keycloak.representations.idm.CredentialRepresentation;
  */
 public class ApplianceBootstrap {
 
-    private static final Logger logger = Logger.getLogger(ApplianceBootstrap.class);
+    private static final ServicesLogger logger = ServicesLogger.ROOT_LOGGER;
+    private final KeycloakSession session;
 
-    public void bootstrap(KeycloakSessionFactory sessionFactory, String contextPath) {
-        KeycloakSession session = sessionFactory.create();
-        session.getTransaction().begin();
+    public ApplianceBootstrap(KeycloakSession session) {
+        this.session = session;
+    }
 
-        try {
-            bootstrap(session, contextPath);
-            session.getTransaction().commit();
-        } finally {
-            session.close();
+    public boolean isNewInstall() {
+        if (session.realms().getRealms().size() > 0) {
+            return false;
+        } else {
+            return true;
         }
     }
 
-    public void bootstrap(KeycloakSession session, String contextPath) {
-        String adminRealmName = Config.getAdminRealm();
-        if (session.realms().getRealm(adminRealmName) != null) {
-            return;
+    public boolean isNoMasterUser() {
+        RealmModel realm = session.realms().getRealm(Config.getAdminRealm());
+        return session.users().getUsersCount(realm) == 0;
+    }
+
+    public boolean createMasterRealm(String contextPath) {
+        if (!isNewInstall()) {
+            throw new IllegalStateException("Can't create default realm as realms already exists");
         }
 
-        logger.info("Initializing " + adminRealmName + " realm");
+        String adminRealmName = Config.getAdminRealm();
+        logger.initializingAdminRealm(adminRealmName);
 
         RealmManager manager = new RealmManager(session);
         manager.setContextPath(contextPath);
         RealmModel realm = manager.createRealm(adminRealmName, adminRealmName);
         realm.setName(adminRealmName);
+        realm.setDisplayName(Version.NAME);
+        realm.setDisplayNameHtml(Version.NAME_HTML);
         realm.setEnabled(true);
         realm.addRequiredCredential(CredentialRepresentation.PASSWORD);
         realm.setSsoSessionIdleTimeout(1800);
         realm.setAccessTokenLifespan(60);
+        realm.setAccessTokenLifespanForImplicitFlow(Constants.DEFAULT_ACCESS_TOKEN_LIFESPAN_FOR_IMPLICIT_FLOW_TIMEOUT);
         realm.setSsoSessionMaxLifespan(36000);
+        realm.setOfflineSessionIdleTimeout(Constants.DEFAULT_OFFLINE_SESSION_IDLE_TIMEOUT);
         realm.setAccessCodeLifespan(60);
         realm.setAccessCodeLifespanUserAction(300);
+        realm.setAccessCodeLifespanLogin(1800);
         realm.setSslRequired(SslRequired.EXTERNAL);
         realm.setRegistrationAllowed(false);
+        realm.setRegistrationEmailAsUsername(false);
         KeycloakModelUtils.generateRealmKeys(realm);
 
-        UserModel adminUser = session.users().addUser(realm, "admin");
+        return true;
+    }
+
+    public void createMasterRealmUser(String username, String password) {
+        RealmModel realm = session.realms().getRealm(Config.getAdminRealm());
+        if (session.users().getUsersCount(realm) > 0) {
+            throw new IllegalStateException("Can't create initial user as users already exists");
+        }
+
+        UserModel adminUser = session.users().addUser(realm, username);
         adminUser.setEnabled(true);
-        UserCredentialModel password = new UserCredentialModel();
-        password.setType(UserCredentialModel.PASSWORD);
-        password.setValue("admin");
-        session.users().updateCredential(realm, adminUser, password);
-        adminUser.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
+
+        UserCredentialModel usrCredModel = new UserCredentialModel();
+        usrCredModel.setType(UserCredentialModel.PASSWORD);
+        usrCredModel.setValue(password);
+        session.users().updateCredential(realm, adminUser, usrCredModel);
 
         RoleModel adminRole = realm.getRole(AdminRoles.ADMIN);
         adminUser.grantRole(adminRole);
-
-        ApplicationModel accountApp = realm.getApplicationNameMap().get(Constants.ACCOUNT_MANAGEMENT_APP);
-        for (String r : accountApp.getDefaultRoles()) {
-            adminUser.grantRole(accountApp.getRole(r));
-        }
     }
 
 }

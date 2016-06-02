@@ -1,10 +1,35 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.representations;
 
-import org.codehaus.jackson.annotate.JsonIgnore;
-import org.codehaus.jackson.annotate.JsonProperty;
-import org.keycloak.util.Time;
+import com.fasterxml.jackson.annotation.JsonAnyGetter;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import org.keycloak.json.StringOrArrayDeserializer;
+import org.keycloak.json.StringOrArraySerializer;
+import org.keycloak.common.util.Time;
 
 import java.io.Serializable;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -22,13 +47,16 @@ public class JsonWebToken implements Serializable {
     @JsonProperty("iss")
     protected String issuer;
     @JsonProperty("aud")
-    protected String audience;
+    @JsonSerialize(using = StringOrArraySerializer.class)
+    @JsonDeserialize(using = StringOrArrayDeserializer.class)
+    protected String[] audience;
     @JsonProperty("sub")
     protected String subject;
     @JsonProperty("typ")
     protected String type;
     @JsonProperty("azp")
     public String issuedFor;
+    protected Map<String, Object> otherClaims = new HashMap<>();
 
     public String getId() {
         return id;
@@ -67,7 +95,6 @@ public class JsonWebToken implements Serializable {
     @JsonIgnore
     public boolean isNotBefore() {
         return Time.currentTime() >= notBefore;
-
     }
 
     /**
@@ -108,12 +135,21 @@ public class JsonWebToken implements Serializable {
         return this;
     }
 
-
-    public String getAudience() {
+    @JsonIgnore
+    public String[] getAudience() {
         return audience;
     }
 
-    public JsonWebToken audience(String audience) {
+    public boolean hasAudience(String audience) {
+        for (String a : this.audience) {
+            if (a.equals(audience)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public JsonWebToken audience(String... audience) {
         this.audience = audience;
         return this;
     }
@@ -125,6 +161,10 @@ public class JsonWebToken implements Serializable {
     public JsonWebToken subject(String subject) {
         this.subject = subject;
         return this;
+    }
+
+    public void setSubject(String subject) {
+        this.subject = subject;
     }
 
     public String getType() {
@@ -148,5 +188,20 @@ public class JsonWebToken implements Serializable {
     public JsonWebToken issuedFor(String issuedFor) {
         this.issuedFor = issuedFor;
         return this;
+    }
+
+    /**
+     * This is a map of any other claims and data that might be in the IDToken.  Could be custom claims set up by the auth server
+     *
+     * @return
+     */
+    @JsonAnyGetter
+    public Map<String, Object> getOtherClaims() {
+        return otherClaims;
+    }
+
+    @JsonAnySetter
+    public void setOtherClaims(String name, Object value) {
+        otherClaims.put(name, value);
     }
 }

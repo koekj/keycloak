@@ -1,24 +1,60 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.models.mongo.keycloak.adapters;
 
 import com.mongodb.DBObject;
 import com.mongodb.QueryBuilder;
+
 import org.keycloak.connections.mongo.api.context.MongoStoreInvocationContext;
-import org.keycloak.enums.SslRequired;
-import org.keycloak.models.ApplicationModel;
+import org.keycloak.common.enums.SslRequired;
+import org.keycloak.models.AuthenticationExecutionModel;
+import org.keycloak.models.AuthenticationFlowModel;
+import org.keycloak.models.AuthenticatorConfigModel;
 import org.keycloak.models.ClientModel;
+import org.keycloak.models.ClientTemplateModel;
+import org.keycloak.models.GroupModel;
+import org.keycloak.models.IdentityProviderMapperModel;
 import org.keycloak.models.IdentityProviderModel;
 import org.keycloak.models.KeycloakSession;
-import org.keycloak.models.OAuthClientModel;
+import org.keycloak.models.ModelDuplicateException;
+import org.keycloak.models.ModelException;
+import org.keycloak.models.OTPPolicy;
 import org.keycloak.models.PasswordPolicy;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RealmProvider;
+import org.keycloak.models.RequiredActionProviderModel;
 import org.keycloak.models.RequiredCredentialModel;
 import org.keycloak.models.RoleModel;
+import org.keycloak.models.UserFederationMapperModel;
+import org.keycloak.models.UserFederationProviderCreationEventImpl;
 import org.keycloak.models.UserFederationProviderModel;
+import org.keycloak.models.entities.AuthenticationExecutionEntity;
+import org.keycloak.models.entities.AuthenticationFlowEntity;
+import org.keycloak.models.entities.AuthenticatorConfigEntity;
+import org.keycloak.models.entities.IdentityProviderEntity;
+import org.keycloak.models.entities.IdentityProviderMapperEntity;
+import org.keycloak.models.entities.RequiredActionProviderEntity;
 import org.keycloak.models.entities.RequiredCredentialEntity;
+import org.keycloak.models.entities.UserFederationMapperEntity;
 import org.keycloak.models.entities.UserFederationProviderEntity;
-import org.keycloak.models.mongo.keycloak.entities.MongoApplicationEntity;
-import org.keycloak.models.mongo.keycloak.entities.MongoOAuthClientEntity;
+import org.keycloak.models.mongo.keycloak.entities.MongoClientEntity;
+import org.keycloak.models.mongo.keycloak.entities.MongoClientTemplateEntity;
+import org.keycloak.models.mongo.keycloak.entities.MongoGroupEntity;
 import org.keycloak.models.mongo.keycloak.entities.MongoRealmEntity;
 import org.keycloak.models.mongo.keycloak.entities.MongoRoleEntity;
 import org.keycloak.models.utils.KeycloakModelUtils;
@@ -52,6 +88,7 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     protected volatile transient X509Certificate certificate;
     protected volatile transient Key codeSecretKey;
 
+    private volatile transient OTPPolicy otpPolicy;
     private volatile transient PasswordPolicy passwordPolicy;
     private volatile transient KeycloakSession session;
 
@@ -79,6 +116,28 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     }
 
     @Override
+    public String getDisplayName() {
+        return realm.getDisplayName();
+    }
+
+    @Override
+    public void setDisplayName(String displayName) {
+        realm.setDisplayName(displayName);
+        updateRealm();
+    }
+
+    @Override
+    public String getDisplayNameHtml() {
+        return realm.getDisplayNameHtml();
+    }
+
+    @Override
+    public void setDisplayNameHtml(String displayNameHtml) {
+        realm.setDisplayNameHtml(displayNameHtml);
+        updateRealm();
+    }
+
+    @Override
     public boolean isEnabled() {
         return realm.isEnabled();
     }
@@ -91,23 +150,12 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
 
     @Override
     public SslRequired getSslRequired() {
-        return SslRequired.valueOf(realm.getSslRequired());
+        return realm.getSslRequired() != null ? SslRequired.valueOf(realm.getSslRequired()) : null;
     }
 
     @Override
     public void setSslRequired(SslRequired sslRequired) {
         realm.setSslRequired(sslRequired.name());
-        updateRealm();
-    }
-
-    @Override
-    public boolean isPasswordCredentialGrantAllowed() {
-        return realm.isPasswordCredentialGrantAllowed();
-    }
-
-    @Override
-    public void setPasswordCredentialGrantAllowed(boolean passwordCredentialGrantAllowed) {
-        realm.setPasswordCredentialGrantAllowed(passwordCredentialGrantAllowed);
         updateRealm();
     }
 
@@ -119,6 +167,15 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     @Override
     public void setRegistrationAllowed(boolean registrationAllowed) {
         realm.setRegistrationAllowed(registrationAllowed);
+        updateRealm();
+    }
+
+    public boolean isRegistrationEmailAsUsername() {
+        return realm.isRegistrationEmailAsUsername();
+    }
+
+    public void setRegistrationEmailAsUsername(boolean registrationEmailAsUsername) {
+        realm.setRegistrationEmailAsUsername(registrationEmailAsUsername);
         updateRealm();
     }
 
@@ -235,6 +292,17 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     }
 
     @Override
+    public boolean isEditUsernameAllowed() {
+        return realm.isEditUsernameAllowed();
+    }
+
+    @Override
+    public void setEditUsernameAllowed(boolean editUsernameAllowed) {
+        realm.setEditUsernameAllowed(editUsernameAllowed);
+        updateRealm();
+    }
+
+    @Override
     public PasswordPolicy getPasswordPolicy() {
         if (passwordPolicy == null) {
             passwordPolicy = new PasswordPolicy(realm.getPasswordPolicy());
@@ -250,6 +318,32 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     }
 
     @Override
+    public OTPPolicy getOTPPolicy() {
+        if (otpPolicy == null) {
+            otpPolicy = new OTPPolicy();
+            otpPolicy.setDigits(realm.getOtpPolicyDigits());
+            otpPolicy.setAlgorithm(realm.getOtpPolicyAlgorithm());
+            otpPolicy.setInitialCounter(realm.getOtpPolicyInitialCounter());
+            otpPolicy.setLookAheadWindow(realm.getOtpPolicyLookAheadWindow());
+            otpPolicy.setType(realm.getOtpPolicyType());
+            otpPolicy.setPeriod(realm.getOtpPolicyPeriod());
+        }
+        return otpPolicy;
+    }
+
+    @Override
+    public void setOTPPolicy(OTPPolicy policy) {
+        realm.setOtpPolicyAlgorithm(policy.getAlgorithm());
+        realm.setOtpPolicyDigits(policy.getDigits());
+        realm.setOtpPolicyInitialCounter(policy.getInitialCounter());
+        realm.setOtpPolicyLookAheadWindow(policy.getLookAheadWindow());
+        realm.setOtpPolicyType(policy.getType());
+        realm.setOtpPolicyPeriod(policy.getPeriod());
+        updateRealm();
+    }
+
+
+    @Override
     public int getNotBefore() {
         return realm.getNotBefore();
     }
@@ -260,6 +354,16 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
         updateRealm();
     }
 
+    @Override
+    public boolean isRevokeRefreshToken() {
+        return realm.isRevokeRefreshToken();
+    }
+
+    @Override
+    public void setRevokeRefreshToken(boolean revokeRefreshToken) {
+        realm.setRevokeRefreshToken(revokeRefreshToken);
+        updateRealm();
+    }
 
     @Override
     public int getSsoSessionIdleTimeout() {
@@ -284,6 +388,17 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     }
 
     @Override
+    public int getOfflineSessionIdleTimeout() {
+        return realm.getOfflineSessionIdleTimeout();
+    }
+
+    @Override
+    public void setOfflineSessionIdleTimeout(int seconds) {
+        realm.setOfflineSessionIdleTimeout(seconds);
+        updateRealm();
+    }
+
+    @Override
     public int getAccessTokenLifespan() {
         return realm.getAccessTokenLifespan();
     }
@@ -294,7 +409,16 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
         updateRealm();
     }
 
+    @Override
+    public int getAccessTokenLifespanForImplicitFlow() {
+        return realm.getAccessTokenLifespanForImplicitFlow();
+    }
 
+    @Override
+    public void setAccessTokenLifespanForImplicitFlow(int seconds) {
+        realm.setAccessTokenLifespanForImplicitFlow(seconds);
+        updateRealm();
+    }
 
     @Override
     public int getAccessCodeLifespan() {
@@ -316,6 +440,17 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     public void setAccessCodeLifespanUserAction(int accessCodeLifespanUserAction) {
         realm.setAccessCodeLifespanUserAction(accessCodeLifespanUserAction);
         updateRealm();
+    }
+
+    @Override
+    public void setAccessCodeLifespanLogin(int accessCodeLifespanLogin) {
+        realm.setAccessCodeLifespanLogin(accessCodeLifespanLogin);
+        updateRealm();
+    }
+
+    @Override
+    public int getAccessCodeLifespanLogin() {
+        return realm.getAccessCodeLifespanLogin();
     }
 
     @Override
@@ -461,47 +596,30 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     }
 
     @Override
-    public RoleAdapter getRole(String name) {
-        DBObject query = new QueryBuilder()
-                .and("name").is(name)
-                .and("realmId").is(getId())
-                .get();
-        MongoRoleEntity role = getMongoStore().loadSingleEntity(MongoRoleEntity.class, query, invocationContext);
-        if (role == null) {
-            return null;
-        } else {
-            return new RoleAdapter(session, this, role, this, invocationContext);
-        }
+    public RoleModel getRole(String name) {
+        return session.realms().getRealmRole(this, name);
     }
 
     @Override
     public RoleModel addRole(String name) {
-        return this.addRole(null, name);
+        return session.realms().addRealmRole(this, name);
     }
 
     @Override
     public RoleModel addRole(String id, String name) {
-        MongoRoleEntity roleEntity = new MongoRoleEntity();
-        roleEntity.setId(id);
-        roleEntity.setName(name);
-        roleEntity.setRealmId(getId());
-
-        getMongoStore().insertEntity(roleEntity, invocationContext);
-
-        return new RoleAdapter(session, this, roleEntity, this, invocationContext);
+        return session.realms().addRealmRole(this, id, name);
     }
 
     @Override
     public boolean removeRole(RoleModel role) {
-        return removeRoleById(role.getId());
+        return session.realms().removeRole(this, role);
     }
 
     @Override
     public boolean removeRoleById(String id) {
         RoleModel role = getRoleById(id);
         if (role == null) return false;
-        session.users().preRemove(this, role);
-        return getMongoStore().removeEntity(MongoRoleEntity.class, id, invocationContext);
+        return removeRole(role);
     }
 
     @Override
@@ -511,24 +629,67 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
                 .get();
         List<MongoRoleEntity> roles = getMongoStore().loadEntities(MongoRoleEntity.class, query, invocationContext);
 
-        Set<RoleModel> result = new HashSet<RoleModel>();
 
-        if (roles == null) return result;
+        if (roles == null) return Collections.EMPTY_SET;
+        Set<RoleModel> result = new HashSet<RoleModel>();
         for (MongoRoleEntity role : roles) {
             result.add(new RoleAdapter(session, this, role, this, invocationContext));
         }
 
-        return result;
+        return Collections.unmodifiableSet(result);
     }
 
     @Override
     public RoleModel getRoleById(String id) {
-        return model.getRoleById(id, this);
+        return session.realms().getRoleById(id, this);
     }
 
     @Override
+    public GroupModel createGroup(String name) {
+        return session.realms().createGroup(this, name);
+    }
+
+    @Override
+    public GroupModel createGroup(String id, String name) {
+        return session.realms().createGroup(this, id, name);
+    }
+
+    @Override
+    public void addTopLevelGroup(GroupModel subGroup) {
+        session.realms().addTopLevelGroup(this, subGroup);
+
+    }
+
+    @Override
+    public void moveGroup(GroupModel group, GroupModel toParent) {
+        session.realms().moveGroup(this, group, toParent);
+    }
+
+    @Override
+    public GroupModel getGroupById(String id) {
+        return model.getGroupById(id, this);
+    }
+
+    @Override
+    public List<GroupModel> getGroups() {
+        return session.realms().getGroups(this);
+    }
+
+    @Override
+    public List<GroupModel> getTopLevelGroups() {
+        return session.realms().getTopLevelGroups(this);
+    }
+
+    @Override
+    public boolean removeGroup(GroupModel group) {
+        return session.realms().removeGroup(this, group);
+    }
+
+
+
+    @Override
     public List<String> getDefaultRoles() {
-        return realm.getDefaultRoles();
+        return Collections.unmodifiableList(realm.getDefaultRoles());
     }
 
     @Override
@@ -557,129 +718,79 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
         updateRealm();
     }
 
-    @Override
-    public ClientModel findClient(String clientId) {
-        ClientModel model = getApplicationByName(clientId);
-        if (model != null) return model;
-        return getOAuthClient(clientId);
-    }
-
-    @Override
-    public ClientModel findClientById(String id) {
-        ClientModel model = getApplicationById(id);
-        if (model != null) return model;
-        return getOAuthClientById(id);
-    }
-
-
-
-    @Override
-    public ApplicationModel getApplicationById(String id) {
-        return model.getApplicationById(id, this);
-    }
-
-    @Override
-    public ApplicationModel getApplicationByName(String name) {
-        DBObject query = new QueryBuilder()
-                .and("realmId").is(getId())
-                .and("name").is(name)
-                .get();
-        MongoApplicationEntity appEntity = getMongoStore().loadSingleEntity(MongoApplicationEntity.class, query, invocationContext);
-        return appEntity == null ? null : new ApplicationAdapter(session, this, appEntity, invocationContext);
-    }
-
-    @Override
-    public Map<String, ApplicationModel> getApplicationNameMap() {
-        Map<String, ApplicationModel> resourceMap = new HashMap<String, ApplicationModel>();
-        for (ApplicationModel resource : getApplications()) {
-            resourceMap.put(resource.getName(), resource);
+    public static boolean contains(String str, String[] array) {
+        for (String s : array) {
+            if (str.equals(s)) return true;
         }
-        return resourceMap;
+        return false;
     }
 
-    @Override
-    public List<ApplicationModel> getApplications() {
-        DBObject query = new QueryBuilder()
-                .and("realmId").is(getId())
-                .get();
-        List<MongoApplicationEntity> appDatas = getMongoStore().loadEntities(MongoApplicationEntity.class, query, invocationContext);
 
-        List<ApplicationModel> result = new ArrayList<ApplicationModel>();
-        for (MongoApplicationEntity appData : appDatas) {
-            result.add(new ApplicationAdapter(session, this, appData, invocationContext));
+    @Override
+    public void removeDefaultRoles(String... defaultRoles) {
+        List<String> roleNames = new ArrayList<String>();
+        for (String role : realm.getDefaultRoles()) {
+            if (!contains(role, defaultRoles)) roleNames.add(role);
         }
-        return result;
+        realm.setDefaultRoles(roleNames);
+        updateRealm();
     }
 
     @Override
-    public ApplicationModel addApplication(String name) {
-        return this.addApplication(null, name);
-    }
-
-    @Override
-    public ApplicationModel addApplication(String id, String name) {
-        MongoApplicationEntity appData = new MongoApplicationEntity();
-        appData.setId(id);
-        appData.setName(name);
-        appData.setRealmId(getId());
-        appData.setEnabled(true);
-        getMongoStore().insertEntity(appData, invocationContext);
-
-        return new ApplicationAdapter(session, this, appData, invocationContext);
-    }
-
-    @Override
-    public boolean removeApplication(String id) {
-        return getMongoStore().removeEntity(MongoApplicationEntity.class, id, invocationContext);
-    }
-
-    @Override
-    public OAuthClientModel addOAuthClient(String name) {
-        return this.addOAuthClient(null, name);
-    }
-
-    @Override
-    public OAuthClientModel addOAuthClient(String id, String name) {
-        MongoOAuthClientEntity oauthClient = new MongoOAuthClientEntity();
-        oauthClient.setId(id);
-        oauthClient.setRealmId(getId());
-        oauthClient.setName(name);
-        getMongoStore().insertEntity(oauthClient, invocationContext);
-
-        return new OAuthClientAdapter(session, this, oauthClient, invocationContext);
-    }
-
-    @Override
-    public boolean removeOAuthClient(String id) {
-        return getMongoStore().removeEntity(MongoOAuthClientEntity.class, id, invocationContext);
-    }
-
-    @Override
-    public OAuthClientModel getOAuthClient(String name) {
-        DBObject query = new QueryBuilder()
-                .and("realmId").is(getId())
-                .and("name").is(name)
-                .get();
-        MongoOAuthClientEntity oauthClient = getMongoStore().loadSingleEntity(MongoOAuthClientEntity.class, query, invocationContext);
-        return oauthClient == null ? null : new OAuthClientAdapter(session, this, oauthClient, invocationContext);
-    }
-
-    @Override
-    public OAuthClientModel getOAuthClientById(String id) {
-        return model.getOAuthClientById(id, this);
-    }
-
-    @Override
-    public List<OAuthClientModel> getOAuthClients() {
-        DBObject query = new QueryBuilder()
-                .and("realmId").is(getId())
-                .get();
-        List<MongoOAuthClientEntity> results = getMongoStore().loadEntities(MongoOAuthClientEntity.class, query, invocationContext);
-        List<OAuthClientModel> list = new ArrayList<OAuthClientModel>();
-        for (MongoOAuthClientEntity data : results) {
-            list.add(new OAuthClientAdapter(session, this, data, invocationContext));
+    public List<GroupModel> getDefaultGroups() {
+        List<String> entities = realm.getDefaultGroups();
+        if (entities == null || entities.isEmpty()) return Collections.EMPTY_LIST;
+        List<GroupModel> defaultGroups = new LinkedList<>();
+        for (String id : entities) {
+            defaultGroups.add(session.realms().getGroupById(id, this));
         }
-        return list;
+        return Collections.unmodifiableList(defaultGroups);
+    }
+
+    @Override
+    public void addDefaultGroup(GroupModel group) {
+        getMongoStore().pushItemToList(realm, "defaultGroups", group.getId(), true, invocationContext);
+
+    }
+
+    @Override
+    public void removeDefaultGroup(GroupModel group) {
+        getMongoStore().pullItemFromList(realm, "defaultGroups", group.getId(), invocationContext);
+
+    }
+
+    @Override
+    public ClientModel getClientById(String id) {
+        return model.getClientById(id, this);
+    }
+
+    @Override
+    public ClientModel getClientByClientId(String clientId) {
+        return session.realms().getClientByClientId(clientId, this);
+    }
+
+    @Override
+    public List<ClientModel> getClients() {
+        return session.realms().getClients(this);
+    }
+
+    @Override
+    public ClientModel addClient(String name) {
+        return session.realms().addClient(this, name);
+    }
+
+    @Override
+    public ClientModel addClient(String id, String clientId) {
+        return session.realms().addClient(this, id, clientId);
+
+    }
+
+    @Override
+    public boolean removeClient(String id) {
+        if (id == null) return false;
+        ClientModel client = getClientById(id);
+        if (client == null) return false;
+        return session.realms().removeClient(id, this);
     }
 
     @Override
@@ -733,8 +844,8 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     }
 
     protected List<RequiredCredentialModel> convertRequiredCredentialEntities(Collection<RequiredCredentialEntity> credEntities) {
-
-        List<RequiredCredentialModel> result = new ArrayList<RequiredCredentialModel>();
+        if (credEntities == null || credEntities.isEmpty()) return Collections.EMPTY_LIST;
+        List<RequiredCredentialModel> result = new LinkedList<>();
         for (RequiredCredentialEntity entity : credEntities) {
             RequiredCredentialModel model = new RequiredCredentialModel();
             model.setFormLabel(entity.getFormLabel());
@@ -744,7 +855,7 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
 
             result.add(model);
         }
-        return result;
+        return Collections.unmodifiableList(result);
     }
 
     protected void updateRealm() {
@@ -761,7 +872,7 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
 
     @Override
     public Map<String, String> getBrowserSecurityHeaders() {
-        return realm.getBrowserSecurityHeaders();
+        return Collections.unmodifiableMap(realm.getBrowserSecurityHeaders());
     }
 
     @Override
@@ -772,7 +883,7 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
 
     @Override
     public Map<String, String> getSmtpConfig() {
-        return realm.getSmtpConfig();
+        return Collections.unmodifiableMap(realm.getSmtpConfig());
     }
 
     @Override
@@ -781,28 +892,102 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
         updateRealm();
     }
 
+
     @Override
     public List<IdentityProviderModel> getIdentityProviders() {
+        List<IdentityProviderEntity> entities = realm.getIdentityProviders();
+        if (entities.isEmpty()) return Collections.EMPTY_LIST;
+        List<IdentityProviderModel> identityProviders = new ArrayList<IdentityProviderModel>();
+
+        for (IdentityProviderEntity entity: entities) {
+            IdentityProviderModel identityProviderModel = new IdentityProviderModel();
+
+            identityProviderModel.setProviderId(entity.getProviderId());
+            identityProviderModel.setAlias(entity.getAlias());
+            identityProviderModel.setInternalId(entity.getInternalId());
+            Map<String, String> config = entity.getConfig();
+            Map<String, String> copy = new HashMap<>();
+            copy.putAll(config);
+            identityProviderModel.setConfig(copy);
+            identityProviderModel.setEnabled(entity.isEnabled());
+            identityProviderModel.setTrustEmail(entity.isTrustEmail());
+            identityProviderModel.setAuthenticateByDefault(entity.isAuthenticateByDefault());
+            identityProviderModel.setFirstBrokerLoginFlowId(entity.getFirstBrokerLoginFlowId());
+            identityProviderModel.setPostBrokerLoginFlowId(entity.getPostBrokerLoginFlowId());
+            identityProviderModel.setStoreToken(entity.isStoreToken());
+            identityProviderModel.setAddReadTokenRoleOnCreate(entity.isAddReadTokenRoleOnCreate());
+
+            identityProviders.add(identityProviderModel);
+        }
+
+        return Collections.unmodifiableList(identityProviders);
+    }
+
+    @Override
+    public IdentityProviderModel getIdentityProviderByAlias(String alias) {
+        for (IdentityProviderModel identityProviderModel : getIdentityProviders()) {
+            if (identityProviderModel.getAlias().equals(alias)) {
+                return identityProviderModel;
+            }
+        }
+
         return null;
     }
 
     @Override
     public void addIdentityProvider(IdentityProviderModel identityProvider) {
+        IdentityProviderEntity entity = new IdentityProviderEntity();
 
+        entity.setInternalId(KeycloakModelUtils.generateId());
+        entity.setAlias(identityProvider.getAlias());
+        entity.setProviderId(identityProvider.getProviderId());
+        entity.setEnabled(identityProvider.isEnabled());
+        entity.setTrustEmail(identityProvider.isTrustEmail());
+        entity.setAddReadTokenRoleOnCreate(identityProvider.isAddReadTokenRoleOnCreate());
+        entity.setStoreToken(identityProvider.isStoreToken());
+        entity.setAuthenticateByDefault(identityProvider.isAuthenticateByDefault());
+        entity.setFirstBrokerLoginFlowId(identityProvider.getFirstBrokerLoginFlowId());
+        entity.setPostBrokerLoginFlowId(identityProvider.getPostBrokerLoginFlowId());
+        entity.setConfig(identityProvider.getConfig());
+
+        realm.getIdentityProviders().add(entity);
+        updateRealm();
     }
 
     @Override
-    public void removeIdentityProviderById(String providerId) {
-
+    public void removeIdentityProviderByAlias(String alias) {
+        for (IdentityProviderEntity entity : realm.getIdentityProviders()) {
+            if (entity.getAlias().equals(alias)) {
+                realm.getIdentityProviders().remove(entity);
+                updateRealm();
+                break;
+            }
+        }
     }
 
     @Override
     public void updateIdentityProvider(IdentityProviderModel identityProvider) {
+        for (IdentityProviderEntity entity : this.realm.getIdentityProviders()) {
+            if (entity.getInternalId().equals(identityProvider.getInternalId())) {
+                entity.setAlias(identityProvider.getAlias());
+                entity.setEnabled(identityProvider.isEnabled());
+                entity.setTrustEmail(identityProvider.isTrustEmail());
+                entity.setAuthenticateByDefault(identityProvider.isAuthenticateByDefault());
+                entity.setFirstBrokerLoginFlowId(identityProvider.getFirstBrokerLoginFlowId());
+                entity.setPostBrokerLoginFlowId(identityProvider.getPostBrokerLoginFlowId());
+                entity.setAddReadTokenRoleOnCreate(identityProvider.isAddReadTokenRoleOnCreate());
+                entity.setStoreToken(identityProvider.isStoreToken());
+                entity.setConfig(identityProvider.getConfig());
+            }
+        }
 
+        updateRealm();
     }
 
     @Override
     public UserFederationProviderModel addUserFederationProvider(String providerName, Map<String, String> config, int priority, String displayName, int fullSyncPeriod, int changedSyncPeriod, int lastSync) {
+        KeycloakModelUtils.ensureUniqueDisplayName(displayName, null, getUserFederationProviders());
+
         UserFederationProviderEntity entity = new UserFederationProviderEntity();
         entity.setId(KeycloakModelUtils.generateId());
         entity.setPriority(priority);
@@ -818,7 +1003,11 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
         realm.getUserFederationProviders().add(entity);
         updateRealm();
 
-        return new UserFederationProviderModel(entity.getId(), providerName, config, priority, displayName, fullSyncPeriod, changedSyncPeriod, lastSync);
+        UserFederationProviderModel providerModel = new UserFederationProviderModel(entity.getId(), providerName, config, priority, displayName, fullSyncPeriod, changedSyncPeriod, lastSync);
+
+        session.getKeycloakSessionFactory().publish(new UserFederationProviderCreationEventImpl(this, providerModel));
+
+        return providerModel;
     }
 
     @Override
@@ -829,14 +1018,25 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
             if (entity.getId().equals(provider.getId())) {
                 session.users().preRemove(this, new UserFederationProviderModel(entity.getId(), entity.getProviderName(), entity.getConfig(), entity.getPriority(), entity.getDisplayName(),
                         entity.getFullSyncPeriod(), entity.getChangedSyncPeriod(), entity.getLastSync()));
+                removeFederationMappersForProvider(provider.getId());
+
                 it.remove();
             }
         }
         updateRealm();
     }
 
+    private void removeFederationMappersForProvider(String federationProviderId) {
+        Set<UserFederationMapperEntity> mappers = getUserFederationMapperEntitiesByFederationProvider(federationProviderId);
+        for (UserFederationMapperEntity mapper : mappers) {
+            getMongoEntity().getUserFederationMappers().remove(mapper);
+        }
+    }
+
     @Override
     public void updateUserFederationProvider(UserFederationProviderModel model) {
+        KeycloakModelUtils.ensureUniqueDisplayName(model.getDisplayName(), model, getUserFederationProviders());
+
         Iterator<UserFederationProviderEntity> it = realm.getUserFederationProviders().iterator();
         while (it.hasNext()) {
             UserFederationProviderEntity entity = it.next();
@@ -859,6 +1059,7 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     @Override
     public List<UserFederationProviderModel> getUserFederationProviders() {
         List<UserFederationProviderEntity> entities = realm.getUserFederationProviders();
+        if (entities.isEmpty()) return Collections.EMPTY_LIST;
         List<UserFederationProviderEntity> copy = new LinkedList<UserFederationProviderEntity>();
         for (UserFederationProviderEntity entity : entities) {
             copy.add(entity);
@@ -878,31 +1079,85 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
                     entity.getFullSyncPeriod(), entity.getChangedSyncPeriod(), entity.getLastSync()));
         }
 
-        return result;
+        return Collections.unmodifiableList(result);
     }
 
     @Override
     public void setUserFederationProviders(List<UserFederationProviderModel> providers) {
-        List<UserFederationProviderEntity> entities = new LinkedList<UserFederationProviderEntity>();
+        for (UserFederationProviderModel currentProvider : providers) {
+            KeycloakModelUtils.ensureUniqueDisplayName(currentProvider.getDisplayName(), currentProvider, providers);
+        }
+
+        List<UserFederationProviderEntity> existingProviders = realm.getUserFederationProviders();
+        List<UserFederationProviderEntity> toRemove = new LinkedList<>();
+        for (UserFederationProviderEntity entity : existingProviders) {
+            boolean found = false;
+            for (UserFederationProviderModel model : providers) {
+                if (entity.getId().equals(model.getId())) {
+                    entity.setConfig(model.getConfig());
+                    entity.setPriority(model.getPriority());
+                    entity.setProviderName(model.getProviderName());
+                    String displayName = model.getDisplayName();
+                    if (displayName != null) {
+                        entity.setDisplayName(displayName);
+                    }
+                    entity.setFullSyncPeriod(model.getFullSyncPeriod());
+                    entity.setChangedSyncPeriod(model.getChangedSyncPeriod());
+                    entity.setLastSync(model.getLastSync());
+                    found = true;
+                    break;
+                }
+
+            }
+            if (found) continue;
+            session.users().preRemove(this, new UserFederationProviderModel(entity.getId(), entity.getProviderName(), entity.getConfig(), entity.getPriority(), entity.getDisplayName(),
+                    entity.getFullSyncPeriod(), entity.getChangedSyncPeriod(), entity.getLastSync()));
+            removeFederationMappersForProvider(entity.getId());
+
+            toRemove.add(entity);
+        }
+
+        for (UserFederationProviderEntity entity : toRemove) {
+            realm.getUserFederationProviders().remove(entity);
+        }
+
+        List<UserFederationProviderModel> add = new LinkedList<UserFederationProviderModel>();
         for (UserFederationProviderModel model : providers) {
+            boolean found = false;
+            for (UserFederationProviderEntity entity : realm.getUserFederationProviders()) {
+                if (entity.getId().equals(model.getId())) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) add.add(model);
+        }
+
+        for (UserFederationProviderModel model : add) {
             UserFederationProviderEntity entity = new UserFederationProviderEntity();
-            if (model.getId() != null) entity.setId(model.getId());
-            else entity.setId(KeycloakModelUtils.generateId());
+            if (model.getId() != null) {
+                entity.setId(model.getId());
+            } else {
+                String id = KeycloakModelUtils.generateId();
+                entity.setId(id);
+                model.setId(id);
+            }
             entity.setProviderName(model.getProviderName());
             entity.setConfig(model.getConfig());
             entity.setPriority(model.getPriority());
             String displayName = model.getDisplayName();
             if (displayName == null) {
-                entity.setDisplayName(entity.getId());
+                displayName = entity.getId();
             }
             entity.setDisplayName(displayName);
             entity.setFullSyncPeriod(model.getFullSyncPeriod());
             entity.setChangedSyncPeriod(model.getChangedSyncPeriod());
             entity.setLastSync(model.getLastSync());
-            entities.add(entity);
+            realm.getUserFederationProviders().add(entity);
+
+            session.getKeycloakSessionFactory().publish(new UserFederationProviderCreationEventImpl(this, model));
         }
 
-        realm.setUserFederationProviders(entities);
         updateRealm();
     }
 
@@ -930,7 +1185,11 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
 
     @Override
     public Set<String> getEventsListeners() {
-        return new HashSet<String>(realm.getEventsListeners());
+        List<String> eventsListeners = realm.getEventsListeners();
+        if (eventsListeners.isEmpty()) return Collections.EMPTY_SET;
+        Set<String> copy = new HashSet<>();
+        copy.addAll(eventsListeners);
+        return Collections.unmodifiableSet(copy);
     }
 
     @Override
@@ -944,15 +1203,63 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     }
 
     @Override
-    public ApplicationModel getMasterAdminApp() {
-        MongoApplicationEntity appData = getMongoStore().loadEntity(MongoApplicationEntity.class, realm.getAdminAppId(), invocationContext);
-        return appData != null ? new ApplicationAdapter(session, this, appData, invocationContext) : null;
+    public Set<String> getEnabledEventTypes() {
+        List<String> enabledEventTypes = realm.getEnabledEventTypes();
+        if (enabledEventTypes.isEmpty()) return Collections.EMPTY_SET;
+        Set<String> copy = new HashSet<>();
+        copy.addAll(enabledEventTypes);
+        return Collections.unmodifiableSet(copy);
     }
 
     @Override
-    public void setMasterAdminApp(ApplicationModel app) {
-        String adminAppId = app != null ? app.getId() : null;
-        realm.setAdminAppId(adminAppId);
+    public void setEnabledEventTypes(Set<String> enabledEventTypes) {
+        if (enabledEventTypes != null) {
+            realm.setEnabledEventTypes(new ArrayList<String>(enabledEventTypes));
+        } else {
+            realm.setEnabledEventTypes(Collections.EMPTY_LIST);
+        }
+        updateRealm();
+    }
+    
+    @Override
+    public boolean isAdminEventsEnabled() {
+        return realm.isAdminEventsEnabled();
+    }
+
+    @Override
+    public void setAdminEventsEnabled(boolean enabled) {
+        realm.setAdminEventsEnabled(enabled);
+        updateRealm();
+        
+    }
+
+    @Override
+    public boolean isAdminEventsDetailsEnabled() {
+        return realm.isAdminEventsDetailsEnabled();
+    }
+
+    @Override
+    public void setAdminEventsDetailsEnabled(boolean enabled) {
+        realm.setAdminEventsDetailsEnabled(enabled);
+        updateRealm();
+    }
+    
+    @Override
+    public ClientModel getMasterAdminClient() {
+        MongoClientEntity appData = getMongoStore().loadEntity(MongoClientEntity.class, realm.getMasterAdminClient(), invocationContext);
+        if (appData == null) {
+            return null;
+        }
+
+        MongoRealmEntity masterRealm = getMongoStore().loadEntity(MongoRealmEntity.class, appData.getRealmId(), invocationContext);
+        RealmModel masterRealmModel = new RealmAdapter(session, masterRealm, invocationContext);
+        return new ClientAdapter(session, masterRealmModel, appData, invocationContext);
+    }
+
+    @Override
+    public void setMasterAdminClient(ClientModel client) {
+        String adminAppId = client != null ? client.getId() : null;
+        realm.setMasterAdminClient(adminAppId);
         updateRealm();
     }
 
@@ -963,8 +1270,7 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
 
     @Override
     public boolean isIdentityFederationEnabled() {
-        //TODO: support identity federation storage for mongo
-        return false;
+        return this.realm.getIdentityProviders() != null && !this.realm.getIdentityProviders().isEmpty();
     }
 
     @Override
@@ -979,6 +1285,767 @@ public class RealmAdapter extends AbstractMongoAdapter<MongoRealmEntity> impleme
     @Override
     public int hashCode() {
         return getId().hashCode();
+    }
+
+    @Override
+    public boolean isInternationalizationEnabled() {
+        return realm.isInternationalizationEnabled();
+    }
+
+    @Override
+    public void setInternationalizationEnabled(boolean enabled) {
+        realm.setInternationalizationEnabled(enabled);
+        updateRealm();
+    }
+
+    @Override
+    public Set<String> getSupportedLocales() {
+        List<String> supportedLocales = realm.getSupportedLocales();
+        if (supportedLocales == null || supportedLocales.isEmpty()) return Collections.EMPTY_SET;
+        Set<String> copy = new HashSet<>();
+        copy.addAll(supportedLocales);
+        return Collections.unmodifiableSet(copy);
+    }
+
+    @Override
+    public void setSupportedLocales(Set<String> locales) {
+        if (locales != null) {
+            realm.setSupportedLocales(new ArrayList<String>(locales));
+        } else {
+            realm.setSupportedLocales(Collections.EMPTY_LIST);
+        }
+        updateRealm();
+    }
+
+    @Override
+    public String getDefaultLocale() {
+        return realm.getDefaultLocale();
+    }
+
+    @Override
+    public void setDefaultLocale(String locale) {
+        realm.setDefaultLocale(locale);
+        updateRealm();
+    }
+
+    @Override
+    public Set<IdentityProviderMapperModel> getIdentityProviderMappers() {
+        List<IdentityProviderMapperEntity> entities = getMongoEntity().getIdentityProviderMappers();
+        if (entities.isEmpty()) return Collections.EMPTY_SET;
+        Set<IdentityProviderMapperModel> mappings = new HashSet<IdentityProviderMapperModel>();
+        for (IdentityProviderMapperEntity entity : entities) {
+            IdentityProviderMapperModel mapping = entityToModel(entity);
+            mappings.add(mapping);
+        }
+        return Collections.unmodifiableSet(mappings);
+    }
+
+    @Override
+    public Set<IdentityProviderMapperModel> getIdentityProviderMappersByAlias(String brokerAlias) {
+        Set<IdentityProviderMapperModel> mappings = new HashSet<IdentityProviderMapperModel>();
+        for (IdentityProviderMapperEntity entity : getMongoEntity().getIdentityProviderMappers()) {
+            if (!entity.getIdentityProviderAlias().equals(brokerAlias)) {
+                continue;
+            }
+            IdentityProviderMapperModel mapping = entityToModel(entity);
+            mappings.add(mapping);
+        }
+        return mappings;
+    }
+
+    @Override
+    public IdentityProviderMapperModel addIdentityProviderMapper(IdentityProviderMapperModel model) {
+        if (getIdentityProviderMapperByName(model.getIdentityProviderAlias(), model.getIdentityProviderMapper()) != null) {
+            throw new RuntimeException("identity provider mapper name must be unique per identity provider");
+        }
+        String id = KeycloakModelUtils.generateId();
+        IdentityProviderMapperEntity entity = new IdentityProviderMapperEntity();
+        entity.setId(id);
+        entity.setName(model.getName());
+        entity.setIdentityProviderAlias(model.getIdentityProviderAlias());
+        entity.setIdentityProviderMapper(model.getIdentityProviderMapper());
+        entity.setConfig(model.getConfig());
+
+        getMongoEntity().getIdentityProviderMappers().add(entity);
+        updateMongoEntity();
+        return entityToModel(entity);
+    }
+
+    protected IdentityProviderMapperEntity getIdentityProviderMapperEntity(String id) {
+        for (IdentityProviderMapperEntity entity : getMongoEntity().getIdentityProviderMappers()) {
+            if (entity.getId().equals(id)) {
+                return entity;
+            }
+        }
+        return null;
+
+    }
+
+    protected IdentityProviderMapperEntity getIdentityProviderMapperEntityByName(String alias, String name) {
+        for (IdentityProviderMapperEntity entity : getMongoEntity().getIdentityProviderMappers()) {
+            if (entity.getIdentityProviderAlias().equals(alias) && entity.getName().equals(name)) {
+                return entity;
+            }
+        }
+        return null;
+
+    }
+
+    @Override
+    public void removeIdentityProviderMapper(IdentityProviderMapperModel mapping) {
+        IdentityProviderMapperEntity toDelete = getIdentityProviderMapperEntity(mapping.getId());
+        if (toDelete != null) {
+            this.realm.getIdentityProviderMappers().remove(toDelete);
+            updateMongoEntity();
+        }
+    }
+
+    @Override
+    public void updateIdentityProviderMapper(IdentityProviderMapperModel mapping) {
+        IdentityProviderMapperEntity entity = getIdentityProviderMapperEntity(mapping.getId());
+        entity.setIdentityProviderAlias(mapping.getIdentityProviderAlias());
+        entity.setIdentityProviderMapper(mapping.getIdentityProviderMapper());
+        if (entity.getConfig() == null) {
+            entity.setConfig(mapping.getConfig());
+        } else {
+            entity.getConfig().clear();
+            entity.getConfig().putAll(mapping.getConfig());
+        }
+        updateMongoEntity();
+
+    }
+
+    @Override
+    public IdentityProviderMapperModel getIdentityProviderMapperById(String id) {
+        IdentityProviderMapperEntity entity = getIdentityProviderMapperEntity(id);
+        if (entity == null) return null;
+        return entityToModel(entity);
+    }
+
+    @Override
+    public IdentityProviderMapperModel getIdentityProviderMapperByName(String alias, String name) {
+        IdentityProviderMapperEntity entity = getIdentityProviderMapperEntityByName(alias, name);
+        if (entity == null) return null;
+        return entityToModel(entity);
+    }
+
+    protected IdentityProviderMapperModel entityToModel(IdentityProviderMapperEntity entity) {
+        IdentityProviderMapperModel mapping = new IdentityProviderMapperModel();
+        mapping.setId(entity.getId());
+        mapping.setName(entity.getName());
+        mapping.setIdentityProviderAlias(entity.getIdentityProviderAlias());
+        mapping.setIdentityProviderMapper(entity.getIdentityProviderMapper());
+        Map<String, String> config = new HashMap<String, String>();
+        if (entity.getConfig() != null) config.putAll(entity.getConfig());
+        mapping.setConfig(config);
+        return mapping;
+    }
+
+    @Override
+    public AuthenticationFlowModel getBrowserFlow() {
+        String flowId = realm.getBrowserFlow();
+        if (flowId == null) return null;
+        return getAuthenticationFlowById(flowId);
+    }
+
+    @Override
+    public void setBrowserFlow(AuthenticationFlowModel flow) {
+        realm.setBrowserFlow(flow.getId());
+        updateRealm();
+
+    }
+
+    @Override
+    public AuthenticationFlowModel getRegistrationFlow() {
+        String flowId = realm.getRegistrationFlow();
+        if (flowId == null) return null;
+        return getAuthenticationFlowById(flowId);
+    }
+
+    @Override
+    public void setRegistrationFlow(AuthenticationFlowModel flow) {
+        realm.setRegistrationFlow(flow.getId());
+        updateRealm();
+
+    }
+
+    @Override
+    public AuthenticationFlowModel getDirectGrantFlow() {
+        String flowId = realm.getDirectGrantFlow();
+        if (flowId == null) return null;
+        return getAuthenticationFlowById(flowId);
+    }
+
+    @Override
+    public void setDirectGrantFlow(AuthenticationFlowModel flow) {
+        realm.setDirectGrantFlow(flow.getId());
+        updateRealm();
+
+    }
+
+    @Override
+    public AuthenticationFlowModel getResetCredentialsFlow() {
+        String flowId = realm.getResetCredentialsFlow();
+        if (flowId == null) return null;
+        return getAuthenticationFlowById(flowId);
+    }
+
+    @Override
+    public void setResetCredentialsFlow(AuthenticationFlowModel flow) {
+        realm.setResetCredentialsFlow(flow.getId());
+        updateRealm();
+    }
+
+    public AuthenticationFlowModel getClientAuthenticationFlow() {
+        String flowId = realm.getClientAuthenticationFlow();
+        if (flowId == null) return null;
+        return getAuthenticationFlowById(flowId);
+    }
+
+    public void setClientAuthenticationFlow(AuthenticationFlowModel flow) {
+        realm.setClientAuthenticationFlow(flow.getId());
+        updateRealm();
+    }
+
+    @Override
+    public List<AuthenticationFlowModel> getAuthenticationFlows() {
+        List<AuthenticationFlowEntity> flows = getMongoEntity().getAuthenticationFlows();
+        if (flows.isEmpty()) return Collections.EMPTY_LIST;
+        List<AuthenticationFlowModel> models = new LinkedList<>();
+        for (AuthenticationFlowEntity entity : flows) {
+            AuthenticationFlowModel model = entityToModel(entity);
+            models.add(model);
+        }
+        return Collections.unmodifiableList(models);
+    }
+
+    @Override
+    public AuthenticationFlowModel getFlowByAlias(String alias) {
+        for (AuthenticationFlowModel flow : getAuthenticationFlows()) {
+            if (flow.getAlias().equals(alias)) {
+                return flow;
+            }
+        }
+        return null;
+    }
+
+
+    protected AuthenticationFlowModel entityToModel(AuthenticationFlowEntity entity) {
+        AuthenticationFlowModel model = new AuthenticationFlowModel();
+        model.setId(entity.getId());
+        model.setAlias(entity.getAlias());
+        model.setDescription(entity.getDescription());
+        model.setBuiltIn(entity.isBuiltIn());
+        model.setTopLevel(entity.isTopLevel());
+        model.setProviderId(entity.getProviderId());
+        return model;
+    }
+
+    @Override
+    public AuthenticationFlowModel getAuthenticationFlowById(String id) {
+        AuthenticationFlowEntity entity = getFlowEntity(id);
+        if (entity == null) return null;
+        return entityToModel(entity);
+    }
+
+    protected AuthenticationFlowEntity getFlowEntity(String id) {
+        List<AuthenticationFlowEntity> flows = getMongoEntity().getAuthenticationFlows();
+        for (AuthenticationFlowEntity entity : flows) {
+            if (id.equals(entity.getId())) return entity;
+        }
+        return null;
+
+    }
+
+    @Override
+    public void removeAuthenticationFlow(AuthenticationFlowModel model) {
+        if (KeycloakModelUtils.isFlowUsed(this, model)) {
+            throw new ModelException("Cannot remove authentication flow, it is currently in use");
+        }
+        AuthenticationFlowEntity toDelete = getFlowEntity(model.getId());
+        if (toDelete == null) return;
+        getMongoEntity().getAuthenticationFlows().remove(toDelete);
+        updateMongoEntity();
+    }
+
+    @Override
+    public void updateAuthenticationFlow(AuthenticationFlowModel model) {
+        AuthenticationFlowEntity toUpdate = getFlowEntity(model.getId());;
+        if (toUpdate == null) return;
+        toUpdate.setAlias(model.getAlias());
+        toUpdate.setDescription(model.getDescription());
+        toUpdate.setProviderId(model.getProviderId());
+        toUpdate.setBuiltIn(model.isBuiltIn());
+        toUpdate.setTopLevel(model.isTopLevel());
+        updateMongoEntity();
+    }
+
+    @Override
+    public AuthenticationFlowModel addAuthenticationFlow(AuthenticationFlowModel model) {
+        AuthenticationFlowEntity entity = new AuthenticationFlowEntity();
+        String id = (model.getId() == null) ? KeycloakModelUtils.generateId(): model.getId();
+        entity.setId(id);
+        entity.setAlias(model.getAlias());
+        entity.setDescription(model.getDescription());
+        entity.setProviderId(model.getProviderId());
+        entity.setBuiltIn(model.isBuiltIn());
+        entity.setTopLevel(model.isTopLevel());
+        getMongoEntity().getAuthenticationFlows().add(entity);
+        model.setId(entity.getId());
+        updateMongoEntity();
+        return model;
+    }
+
+    @Override
+    public List<AuthenticationExecutionModel> getAuthenticationExecutions(String flowId) {
+        AuthenticationFlowEntity flow = getFlowEntity(flowId);
+        if (flow == null) return Collections.EMPTY_LIST;
+
+        List<AuthenticationExecutionEntity> queryResult = flow.getExecutions();
+        List<AuthenticationExecutionModel> executions = new LinkedList<>();
+        for (AuthenticationExecutionEntity entity : queryResult) {
+            AuthenticationExecutionModel model = entityToModel(entity);
+            executions.add(model);
+        }
+        Collections.sort(executions, AuthenticationExecutionModel.ExecutionComparator.SINGLETON);
+        return Collections.unmodifiableList(executions);
+    }
+
+    public AuthenticationExecutionModel entityToModel(AuthenticationExecutionEntity entity) {
+        AuthenticationExecutionModel model = new AuthenticationExecutionModel();
+        model.setId(entity.getId());
+        model.setRequirement(entity.getRequirement());
+        model.setPriority(entity.getPriority());
+        model.setAuthenticator(entity.getAuthenticator());
+        model.setFlowId(entity.getFlowId());
+        model.setParentFlow(entity.getParentFlow());
+        model.setAuthenticatorFlow(entity.isAuthenticatorFlow());
+        model.setAuthenticatorConfig(entity.getAuthenticatorConfig());
+        return model;
+    }
+
+    @Override
+    public AuthenticationExecutionModel getAuthenticationExecutionById(String id) {
+        AuthenticationExecutionEntity execution = getAuthenticationExecutionEntity(id);
+        return entityToModel(execution);
+    }
+
+    public AuthenticationExecutionEntity getAuthenticationExecutionEntity(String id) {
+        List<AuthenticationFlowEntity> flows = getMongoEntity().getAuthenticationFlows();
+        for (AuthenticationFlowEntity entity : flows) {
+            for (AuthenticationExecutionEntity exe : entity.getExecutions()) {
+                if (exe.getId().equals(id)) {
+                   return exe;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public AuthenticationExecutionModel addAuthenticatorExecution(AuthenticationExecutionModel model) {
+        AuthenticationExecutionEntity entity = new AuthenticationExecutionEntity();
+        String id = (model.getId() == null) ? KeycloakModelUtils.generateId(): model.getId();
+        entity.setId(id);
+        entity.setAuthenticator(model.getAuthenticator());
+        entity.setPriority(model.getPriority());
+        entity.setRequirement(model.getRequirement());
+        entity.setAuthenticatorFlow(model.isAuthenticatorFlow());
+        entity.setFlowId(model.getFlowId());
+        entity.setParentFlow(model.getParentFlow());
+        entity.setAuthenticatorConfig(model.getAuthenticatorConfig());
+        AuthenticationFlowEntity flow = getFlowEntity(model.getParentFlow());
+        flow.getExecutions().add(entity);
+        updateMongoEntity();
+        model.setId(entity.getId());
+        return model;
+
+    }
+
+    @Override
+    public void updateAuthenticatorExecution(AuthenticationExecutionModel model) {
+        AuthenticationExecutionEntity entity = null;
+        AuthenticationFlowEntity flow = getFlowEntity(model.getParentFlow());
+        for (AuthenticationExecutionEntity exe : flow.getExecutions()) {
+            if (exe.getId().equals(model.getId())) {
+                entity = exe;
+            }
+        }
+        if (entity == null) return;
+        entity.setAuthenticatorFlow(model.isAuthenticatorFlow());
+        entity.setAuthenticator(model.getAuthenticator());
+        entity.setPriority(model.getPriority());
+        entity.setRequirement(model.getRequirement());
+        entity.setFlowId(model.getFlowId());
+        entity.setAuthenticatorConfig(model.getAuthenticatorConfig());
+        updateMongoEntity();
+    }
+
+    @Override
+    public void removeAuthenticatorExecution(AuthenticationExecutionModel model) {
+        AuthenticationExecutionEntity entity = null;
+        AuthenticationFlowEntity flow = getFlowEntity(model.getParentFlow());
+        for (AuthenticationExecutionEntity exe : flow.getExecutions()) {
+            if (exe.getId().equals(model.getId())) {
+                entity = exe;
+            }
+        }
+        if (entity == null) return;
+        flow.getExecutions().remove(entity);
+        updateMongoEntity();
+
+    }
+
+    @Override
+    public List<AuthenticatorConfigModel> getAuthenticatorConfigs() {
+        List<AuthenticatorConfigEntity> entities = getMongoEntity().getAuthenticatorConfigs();
+        if (entities.isEmpty()) return Collections.EMPTY_LIST;
+        List<AuthenticatorConfigModel> authenticators = new LinkedList<>();
+        for (AuthenticatorConfigEntity entity : entities) {
+            authenticators.add(entityToModel(entity));
+        }
+        return Collections.unmodifiableList(authenticators);
+    }
+
+    @Override
+    public AuthenticatorConfigModel getAuthenticatorConfigByAlias(String alias) {
+        for (AuthenticatorConfigModel config : getAuthenticatorConfigs()) {
+            if (config.getAlias().equals(alias)) {
+                return config;
+            }
+        }
+        return null;
+    }
+
+
+    @Override
+    public AuthenticatorConfigModel addAuthenticatorConfig(AuthenticatorConfigModel model) {
+        AuthenticatorConfigEntity auth = new AuthenticatorConfigEntity();
+        String id = (model.getId() == null) ? KeycloakModelUtils.generateId(): model.getId();
+        auth.setId(id);
+        auth.setAlias(model.getAlias());
+        auth.setConfig(model.getConfig());
+        realm.getAuthenticatorConfigs().add(auth);
+        model.setId(auth.getId());
+        updateMongoEntity();
+        return model;
+    }
+
+    @Override
+    public void removeAuthenticatorConfig(AuthenticatorConfigModel model) {
+        AuthenticatorConfigEntity entity = getAuthenticatorConfigEntity(model.getId());
+        if (entity == null) return;
+        getMongoEntity().getAuthenticatorConfigs().remove(entity);
+        updateMongoEntity();
+
+    }
+
+    @Override
+    public AuthenticatorConfigModel getAuthenticatorConfigById(String id) {
+        AuthenticatorConfigEntity entity = getAuthenticatorConfigEntity(id);
+        if (entity == null) return null;
+        return entityToModel(entity);
+    }
+
+    public AuthenticatorConfigEntity getAuthenticatorConfigEntity(String id) {
+        AuthenticatorConfigEntity entity = null;
+        for (AuthenticatorConfigEntity auth : getMongoEntity().getAuthenticatorConfigs()) {
+            if (auth.getId().equals(id)) {
+                entity = auth;
+                break;
+            }
+        }
+        return entity;
+    }
+
+    public AuthenticatorConfigModel entityToModel(AuthenticatorConfigEntity entity) {
+        AuthenticatorConfigModel model = new AuthenticatorConfigModel();
+        model.setId(entity.getId());
+        model.setAlias(entity.getAlias());
+        Map<String, String> config = new HashMap<>();
+        if (entity.getConfig() != null) config.putAll(entity.getConfig());
+        model.setConfig(config);
+        return model;
+    }
+
+    @Override
+    public void updateAuthenticatorConfig(AuthenticatorConfigModel model) {
+        AuthenticatorConfigEntity entity = getAuthenticatorConfigEntity(model.getId());
+        if (entity == null) return;
+        entity.setAlias(model.getAlias());
+        if (entity.getConfig() == null) {
+            entity.setConfig(model.getConfig());
+        } else {
+            entity.getConfig().clear();
+            entity.getConfig().putAll(model.getConfig());
+        }
+        updateMongoEntity();
+    }
+
+    @Override
+    public RequiredActionProviderModel addRequiredActionProvider(RequiredActionProviderModel model) {
+        RequiredActionProviderEntity auth = new RequiredActionProviderEntity();
+        auth.setId(KeycloakModelUtils.generateId());
+        auth.setAlias(model.getAlias());
+        auth.setName(model.getName());
+        auth.setProviderId(model.getProviderId());
+        auth.setConfig(model.getConfig());
+        auth.setEnabled(model.isEnabled());
+        auth.setDefaultAction(model.isDefaultAction());
+        realm.getRequiredActionProviders().add(auth);
+        model.setId(auth.getId());
+        updateMongoEntity();
+        return model;
+    }
+
+    @Override
+    public void removeRequiredActionProvider(RequiredActionProviderModel model) {
+        RequiredActionProviderEntity entity = getRequiredActionProviderEntity(model.getId());
+        if (entity == null) return;
+        getMongoEntity().getRequiredActionProviders().remove(entity);
+        updateMongoEntity();
+    }
+
+    @Override
+    public RequiredActionProviderModel getRequiredActionProviderById(String id) {
+        RequiredActionProviderEntity entity = getRequiredActionProviderEntity(id);
+        if (entity == null) return null;
+        return entityToModel(entity);
+    }
+
+    public RequiredActionProviderModel entityToModel(RequiredActionProviderEntity entity) {
+        RequiredActionProviderModel model = new RequiredActionProviderModel();
+        model.setId(entity.getId());
+        model.setProviderId(entity.getProviderId());
+        model.setAlias(entity.getAlias());
+        model.setName(entity.getName());
+        model.setEnabled(entity.isEnabled());
+        model.setDefaultAction(entity.isDefaultAction());
+        Map<String, String> config = new HashMap<>();
+        if (entity.getConfig() != null) config.putAll(entity.getConfig());
+        model.setConfig(config);
+        return model;
+    }
+
+    @Override
+    public void updateRequiredActionProvider(RequiredActionProviderModel model) {
+        RequiredActionProviderEntity entity = getRequiredActionProviderEntity(model.getId());
+        if (entity == null) return;
+        entity.setAlias(model.getAlias());
+        entity.setProviderId(model.getProviderId());
+        entity.setEnabled(model.isEnabled());
+        entity.setDefaultAction(model.isDefaultAction());
+        if (entity.getConfig() == null) {
+            entity.setConfig(model.getConfig());
+        } else {
+            entity.getConfig().clear();
+            entity.getConfig().putAll(model.getConfig());
+        }
+        updateMongoEntity();
+    }
+
+    @Override
+    public List<RequiredActionProviderModel> getRequiredActionProviders() {
+        List<RequiredActionProviderEntity> entities = realm.getRequiredActionProviders();
+        if (entities.isEmpty()) return Collections.EMPTY_LIST;
+        List<RequiredActionProviderModel> actions = new LinkedList<>();
+        for (RequiredActionProviderEntity entity : entities) {
+            actions.add(entityToModel(entity));
+        }
+        return Collections.unmodifiableList(actions);
+    }
+
+    public RequiredActionProviderEntity getRequiredActionProviderEntity(String id) {
+        RequiredActionProviderEntity entity = null;
+        for (RequiredActionProviderEntity auth : getMongoEntity().getRequiredActionProviders()) {
+            if (auth.getId().equals(id)) {
+                entity = auth;
+                break;
+            }
+        }
+        return entity;
+    }
+
+    @Override
+    public RequiredActionProviderModel getRequiredActionProviderByAlias(String alias) {
+        for (RequiredActionProviderModel action : getRequiredActionProviders()) {
+            if (action.getAlias().equals(alias)) return action;
+        }
+        return null;
+    }
+
+
+
+
+
+    @Override
+    public Set<UserFederationMapperModel> getUserFederationMappers() {
+        List<UserFederationMapperEntity> entities = getMongoEntity().getUserFederationMappers();
+        if (entities.isEmpty()) return Collections.EMPTY_SET;
+        Set<UserFederationMapperModel> mappers = new HashSet<UserFederationMapperModel>();
+        for (UserFederationMapperEntity entity : entities) {
+            UserFederationMapperModel mapper = entityToModel(entity);
+            mappers.add(mapper);
+        }
+        return Collections.unmodifiableSet(mappers);
+    }
+
+    @Override
+    public Set<UserFederationMapperModel> getUserFederationMappersByFederationProvider(String federationProviderId) {
+        Set<UserFederationMapperModel> mappers = new HashSet<UserFederationMapperModel>();
+        Set<UserFederationMapperEntity> mapperEntities = getUserFederationMapperEntitiesByFederationProvider(federationProviderId);
+        for (UserFederationMapperEntity entity : mapperEntities) {
+            mappers.add(entityToModel(entity));
+        }
+        return mappers;
+    }
+
+    @Override
+    public UserFederationMapperModel addUserFederationMapper(UserFederationMapperModel model) {
+        if (getUserFederationMapperByName(model.getFederationProviderId(), model.getName()) != null) {
+            throw new ModelDuplicateException("User federation mapper must be unique per federation provider. There is already: " + model.getName());
+        }
+        String id = KeycloakModelUtils.generateId();
+        UserFederationMapperEntity entity = new UserFederationMapperEntity();
+        entity.setId(id);
+        entity.setName(model.getName());
+        entity.setFederationProviderId(model.getFederationProviderId());
+        entity.setFederationMapperType(model.getFederationMapperType());
+        entity.setConfig(model.getConfig());
+
+        getMongoEntity().getUserFederationMappers().add(entity);
+        updateMongoEntity();
+        UserFederationMapperModel mapperModel = entityToModel(entity);
+
+        return mapperModel;
+    }
+
+    protected UserFederationMapperEntity getUserFederationMapperEntity(String id) {
+        for (UserFederationMapperEntity entity : getMongoEntity().getUserFederationMappers()) {
+            if (entity.getId().equals(id)) {
+                return entity;
+            }
+        }
+        return null;
+
+    }
+
+    protected UserFederationMapperEntity getUserFederationMapperEntityByName(String federationProviderId, String name) {
+        for (UserFederationMapperEntity entity : getMongoEntity().getUserFederationMappers()) {
+            if (entity.getFederationProviderId().equals(federationProviderId) && entity.getName().equals(name)) {
+                return entity;
+            }
+        }
+        return null;
+
+    }
+
+    protected Set<UserFederationMapperEntity> getUserFederationMapperEntitiesByFederationProvider(String federationProviderId) {
+        Set<UserFederationMapperEntity> mappers = new HashSet<UserFederationMapperEntity>();
+        for (UserFederationMapperEntity entity : getMongoEntity().getUserFederationMappers()) {
+            if (federationProviderId.equals(entity.getFederationProviderId())) {
+                mappers.add(entity);
+            }
+        }
+        return mappers;
+    }
+
+    @Override
+    public void removeUserFederationMapper(UserFederationMapperModel mapper) {
+        UserFederationMapperEntity toDelete = getUserFederationMapperEntity(mapper.getId());
+        if (toDelete != null) {
+            this.realm.getUserFederationMappers().remove(toDelete);
+            updateMongoEntity();
+        }
+    }
+
+    @Override
+    public void updateUserFederationMapper(UserFederationMapperModel mapper) {
+        UserFederationMapperEntity entity = getUserFederationMapperEntity(mapper.getId());
+        entity.setFederationProviderId(mapper.getFederationProviderId());
+        entity.setFederationMapperType(mapper.getFederationMapperType());
+        if (entity.getConfig() == null) {
+            entity.setConfig(mapper.getConfig());
+        } else {
+            entity.getConfig().clear();
+            entity.getConfig().putAll(mapper.getConfig());
+        }
+        updateMongoEntity();
+    }
+
+    @Override
+    public UserFederationMapperModel getUserFederationMapperById(String id) {
+        UserFederationMapperEntity entity = getUserFederationMapperEntity(id);
+        if (entity == null) return null;
+        return entityToModel(entity);
+    }
+
+    @Override
+    public UserFederationMapperModel getUserFederationMapperByName(String federationProviderId, String name) {
+        UserFederationMapperEntity entity = getUserFederationMapperEntityByName(federationProviderId, name);
+        if (entity == null) return null;
+        return entityToModel(entity);
+    }
+
+    protected UserFederationMapperModel entityToModel(UserFederationMapperEntity entity) {
+        UserFederationMapperModel mapper = new UserFederationMapperModel();
+        mapper.setId(entity.getId());
+        mapper.setName(entity.getName());
+        mapper.setFederationProviderId(entity.getFederationProviderId());
+        mapper.setFederationMapperType(entity.getFederationMapperType());
+        Map<String, String> config = new HashMap<String, String>();
+        if (entity.getConfig() != null) config.putAll(entity.getConfig());
+        mapper.setConfig(config);
+        return mapper;
+    }
+
+    @Override
+    public List<ClientTemplateModel> getClientTemplates() {
+        DBObject query = new QueryBuilder()
+                .and("realmId").is(getId())
+                .get();
+        List<MongoClientTemplateEntity> clientEntities = getMongoStore().loadEntities(MongoClientTemplateEntity.class, query, invocationContext);
+        if (clientEntities.isEmpty()) return Collections.EMPTY_LIST;
+        List<ClientTemplateModel> result = new LinkedList<>();
+        for (MongoClientTemplateEntity clientEntity : clientEntities) {
+            result.add(new ClientTemplateAdapter(session, this, clientEntity, invocationContext));
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    @Override
+    public ClientTemplateModel addClientTemplate(String name) {
+        return this.addClientTemplate(null, name);
+    }
+
+    @Override
+    public ClientTemplateModel addClientTemplate(String id, String name) {
+        MongoClientTemplateEntity clientEntity = new MongoClientTemplateEntity();
+        clientEntity.setId(id);
+        clientEntity.setName(name);
+        clientEntity.setRealmId(getId());
+        getMongoStore().insertEntity(clientEntity, invocationContext);
+
+        final ClientTemplateModel model = new ClientTemplateAdapter(session, this, clientEntity, invocationContext);
+        return model;
+    }
+
+    @Override
+    public boolean removeClientTemplate(String id) {
+        if (id == null) return false;
+        ClientTemplateModel client = getClientTemplateById(id);
+        if (client == null) return false;
+
+        if (KeycloakModelUtils.isClientTemplateUsed(this, client)) {
+            throw new ModelException("Cannot remove client template, it is currently in use");
+        }
+
+        return getMongoStore().removeEntity(MongoClientTemplateEntity.class, id, invocationContext);
+    }
+
+    @Override
+    public ClientTemplateModel getClientTemplateById(String id) {
+        return model.getClientTemplateById(id, this);
     }
 
 

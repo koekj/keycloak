@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.models.jpa.entities;
 
 import javax.persistence.Column;
@@ -23,7 +40,8 @@ import java.io.Serializable;
         @NamedQuery(name="deleteUserRoleMappingsByRealm", query="delete from  UserRoleMappingEntity mapping where mapping.user IN (select u from UserEntity u where u.realmId=:realmId)"),
         @NamedQuery(name="deleteUserRoleMappingsByRealmAndLink", query="delete from  UserRoleMappingEntity mapping where mapping.user IN (select u from UserEntity u where u.realmId=:realmId and u.federationLink=:link)"),
         @NamedQuery(name="deleteUserRoleMappingsByRole", query="delete from UserRoleMappingEntity m where m.roleId = :roleId"),
-        @NamedQuery(name="deleteUserRoleMappingsByUser", query="delete from UserRoleMappingEntity m where m.user = :user")
+        @NamedQuery(name="deleteUserRoleMappingsByUser", query="delete from UserRoleMappingEntity m where m.user = :user"),
+        @NamedQuery(name="grantRoleToAllUsers", query="insert into UserRoleMappingEntity (roleId, user) select role.id, user from RoleEntity role, UserEntity user where role.id = :roleId AND role.realm.id = :realmId AND user.realmId = :realmId")
 
 })
 @Table(name="USER_ROLE_MAPPING")
@@ -99,4 +117,26 @@ public class UserRoleMappingEntity  {
             return result;
         }
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null) return false;
+        if (!(o instanceof UserRoleMappingEntity)) return false;
+
+        UserRoleMappingEntity key = (UserRoleMappingEntity) o;
+
+        if (!roleId.equals(key.roleId)) return false;
+        if (!user.equals(key.user)) return false;
+
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = user.hashCode();
+        result = 31 * result + roleId.hashCode();
+        return result;
+    }
+
 }

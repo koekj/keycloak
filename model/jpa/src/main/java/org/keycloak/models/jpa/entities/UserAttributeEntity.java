@@ -1,6 +1,27 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.models.jpa.entities;
 
+import javax.persistence.Access;
+import javax.persistence.AccessType;
+import javax.persistence.CollectionTable;
 import javax.persistence.Column;
+import javax.persistence.ElementCollection;
 import javax.persistence.Entity;
 import javax.persistence.FetchType;
 import javax.persistence.Id;
@@ -11,30 +32,43 @@ import javax.persistence.NamedQueries;
 import javax.persistence.NamedQuery;
 import javax.persistence.Table;
 import java.io.Serializable;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
 @NamedQueries({
+        @NamedQuery(name="getAttributesByNameAndValue", query="select attr from UserAttributeEntity attr where attr.name = :name and attr.value = :value"),
         @NamedQuery(name="deleteUserAttributesByRealm", query="delete from  UserAttributeEntity attr where attr.user IN (select u from UserEntity u where u.realmId=:realmId)"),
         @NamedQuery(name="deleteUserAttributesByRealmAndLink", query="delete from  UserAttributeEntity attr where attr.user IN (select u from UserEntity u where u.realmId=:realmId and u.federationLink=:link)")
 })
 @Table(name="USER_ATTRIBUTE")
 @Entity
-@IdClass(UserAttributeEntity.Key.class)
 public class UserAttributeEntity {
 
     @Id
+    @Column(name="ID", length = 36)
+    @Access(AccessType.PROPERTY) // we do this because relationships often fetch id, but not entity.  This avoids an extra SQL
+    protected String id;
+
     @ManyToOne(fetch= FetchType.LAZY)
     @JoinColumn(name = "USER_ID")
     protected UserEntity user;
 
-    @Id
     @Column(name = "NAME")
     protected String name;
     @Column(name = "VALUE")
     protected String value;
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
 
     public String getName() {
         return name;
@@ -60,47 +94,23 @@ public class UserAttributeEntity {
         this.user = user;
     }
 
-    public static class Key implements Serializable {
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null) return false;
+        if (!(o instanceof UserAttributeEntity)) return false;
 
-        protected UserEntity user;
+        UserAttributeEntity that = (UserAttributeEntity) o;
 
-        protected String name;
+        if (!id.equals(that.getId())) return false;
 
-        public Key() {
-        }
-
-        public Key(UserEntity user, String name) {
-            this.user = user;
-            this.name = name;
-        }
-
-        public UserEntity getUser() {
-            return user;
-        }
-
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-
-            Key key = (Key) o;
-
-            if (name != null ? !name.equals(key.name) : key.name != null) return false;
-            if (user != null ? !user.getId().equals(key.user != null ? key.user.getId() : null) : key.user != null) return false;
-
-            return true;
-        }
-
-        @Override
-        public int hashCode() {
-            int result = user != null ? user.getId().hashCode() : 0;
-            result = 31 * result + (name != null ? name.hashCode() : 0);
-            return result;
-        }
+        return true;
     }
+
+    @Override
+    public int hashCode() {
+        return id.hashCode();
+    }
+
 
 }

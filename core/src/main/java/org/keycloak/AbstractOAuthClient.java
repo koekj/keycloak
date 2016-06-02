@@ -1,7 +1,24 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak;
 
-import org.keycloak.enums.RelativeUrlsUsed;
-import org.keycloak.util.KeycloakUriBuilder;
+import org.keycloak.common.enums.RelativeUrlsUsed;
+import org.keycloak.common.util.KeycloakUriBuilder;
 
 import java.util.Map;
 import java.util.UUID;
@@ -16,10 +33,9 @@ public class AbstractOAuthClient {
     private final AtomicLong counter = new AtomicLong();
 
     protected String clientId;
-    protected Map<String, String> credentials;
+    protected Map<String, Object> credentials;
     protected String authUrl;
-    protected String codeUrl;
-    protected String refreshUrl;
+    protected String tokenUrl;
     protected RelativeUrlsUsed relativeUrlsUsed;
     protected String scope;
     protected String stateCookieName = OAUTH_TOKEN_REQUEST_STATE;
@@ -38,11 +54,11 @@ public class AbstractOAuthClient {
         this.clientId = clientId;
     }
 
-    public Map<String, String> getCredentials() {
+    public Map<String, Object> getCredentials() {
         return credentials;
     }
 
-    public void setCredentials(Map<String, String> credentials) {
+    public void setCredentials(Map<String, Object> credentials) {
         this.credentials = credentials;
     }
 
@@ -54,20 +70,12 @@ public class AbstractOAuthClient {
         this.authUrl = authUrl;
     }
 
-    public String getCodeUrl() {
-        return codeUrl;
+    public String getTokenUrl() {
+        return tokenUrl;
     }
 
-    public void setCodeUrl(String codeUrl) {
-        this.codeUrl = codeUrl;
-    }
-
-    public String getRefreshUrl() {
-        return refreshUrl;
-    }
-
-    public void setRefreshUrl(String refreshUrl) {
-        this.refreshUrl = refreshUrl;
+    public void setTokenUrl(String tokenUrl) {
+        this.tokenUrl = tokenUrl;
     }
 
     public String getScope() {
@@ -100,6 +108,14 @@ public class AbstractOAuthClient {
 
     public void setPublicClient(boolean publicClient) {
         this.publicClient = publicClient;
+    }
+
+    public boolean isSecure() {
+        return isSecure;
+    }
+
+    public void setSecure(boolean secure) {
+        isSecure = secure;
     }
 
     public RelativeUrlsUsed getRelativeUrlsUsed() {

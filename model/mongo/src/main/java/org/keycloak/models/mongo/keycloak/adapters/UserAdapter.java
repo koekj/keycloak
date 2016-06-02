@@ -1,8 +1,35 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.models.mongo.keycloak.adapters;
 
+import com.mongodb.DBObject;
+import com.mongodb.QueryBuilder;
+
 import org.keycloak.connections.mongo.api.context.MongoStoreInvocationContext;
-import org.keycloak.models.ApplicationModel;
+import org.keycloak.hash.PasswordHashManager;
+import org.keycloak.models.ClientModel;
+import org.keycloak.models.GroupModel;
+import org.keycloak.models.OTPPolicy;
+import org.keycloak.models.ProtocolMapperModel;
+import org.keycloak.models.UserConsentModel;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.ModelDuplicateException;
+import org.keycloak.models.ModelException;
 import org.keycloak.models.PasswordPolicy;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RoleModel;
@@ -10,15 +37,19 @@ import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserCredentialValueModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.entities.CredentialEntity;
-import org.keycloak.models.mongo.keycloak.entities.MongoRoleEntity;
+import org.keycloak.models.entities.UserConsentEntity;
+import org.keycloak.models.mongo.keycloak.entities.MongoUserConsentEntity;
 import org.keycloak.models.mongo.keycloak.entities.MongoUserEntity;
 import org.keycloak.models.mongo.utils.MongoModelUtils;
-import org.keycloak.models.utils.Pbkdf2PasswordEncoder;
+import org.keycloak.models.utils.KeycloakModelUtils;
+import org.keycloak.common.util.Time;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -29,7 +60,7 @@ import java.util.Set;
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
  */
 public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implements UserModel {
-
+    
     private final MongoUserEntity user;
     private final RealmModel realm;
     private final KeycloakSession session;
@@ -53,8 +84,20 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
 
     @Override
     public void setUsername(String username) {
+        username = KeycloakModelUtils.toLowerCaseSafe(username);
+
         user.setUsername(username);
         updateUser();
+    }
+
+    @Override
+    public Long getCreatedTimestamp() {
+        return user.getCreatedTimestamp();
+    }
+
+    @Override
+    public void setCreatedTimestamp(Long timestamp) {
+        user.setCreatedTimestamp(timestamp);
     }
 
     @Override
@@ -97,6 +140,8 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
 
     @Override
     public void setEmail(String email) {
+        email = KeycloakModelUtils.toLowerCaseSafe(email);
+
         user.setEmail(email);
         updateUser();
     }
@@ -113,12 +158,24 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
     }
 
     @Override
-    public void setAttribute(String name, String value) {
+    public void setSingleAttribute(String name, String value) {
         if (user.getAttributes() == null) {
-            user.setAttributes(new HashMap<String, String>());
+            user.setAttributes(new HashMap<String, List<String>>());
         }
 
-        user.getAttributes().put(name, value);
+        List<String> attrValues = new ArrayList<>();
+        attrValues.add(value);
+        user.getAttributes().put(name, attrValues);
+        updateUser();
+    }
+
+    @Override
+    public void setAttribute(String name, List<String> values) {
+        if (user.getAttributes() == null) {
+            user.setAttributes(new HashMap<String, List<String>>());
+        }
+
+        user.getAttributes().put(name, values);
         updateUser();
     }
 
@@ -131,13 +188,23 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
     }
 
     @Override
-    public String getAttribute(String name) {
-        return user.getAttributes()==null ? null : user.getAttributes().get(name);
+    public String getFirstAttribute(String name) {
+        if (user.getAttributes()==null) return null;
+
+        List<String> attrValues = user.getAttributes().get(name);
+        return (attrValues==null || attrValues.isEmpty()) ? null : attrValues.get(0);
     }
 
     @Override
-    public Map<String, String> getAttributes() {
-        return user.getAttributes()==null ? Collections.<String, String>emptyMap() : Collections.unmodifiableMap(user.getAttributes());
+    public List<String> getAttribute(String name) {
+        if (user.getAttributes()==null) return Collections.<String>emptyList();
+        List<String> attrValues = user.getAttributes().get(name);
+        return (attrValues == null) ? Collections.<String>emptyList() : Collections.unmodifiableList(attrValues);
+    }
+
+    @Override
+    public Map<String, List<String>> getAttributes() {
+        return user.getAttributes()==null ? Collections.<String, List<String>>emptyMap() : Collections.unmodifiableMap((Map) user.getAttributes());
     }
 
     public MongoUserEntity getUser() {
@@ -146,8 +213,8 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
 
 
     @Override
-    public Set<RequiredAction> getRequiredActions() {
-        Set<RequiredAction> result = new HashSet<RequiredAction>();
+    public Set<String> getRequiredActions() {
+        Set<String> result = new HashSet<String>();
         if (user.getRequiredActions() != null) {
             result.addAll(user.getRequiredActions());
         }
@@ -156,52 +223,133 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
 
     @Override
     public void addRequiredAction(RequiredAction action) {
-        getMongoStore().pushItemToList(user, "requiredActions", action, true, invocationContext);
+        String actionName = action.name();
+        addRequiredAction(actionName);
+    }
+
+    @Override
+    public void addRequiredAction(String actionName) {
+        getMongoStore().pushItemToList(user, "requiredActions", actionName, true, invocationContext);
     }
 
     @Override
     public void removeRequiredAction(RequiredAction action) {
-        getMongoStore().pullItemFromList(user, "requiredActions", action, invocationContext);
+        String actionName = action.name();
+        removeRequiredAction(actionName);
     }
 
     @Override
-    public boolean isTotp() {
+    public void removeRequiredAction(String actionName) {
+        getMongoStore().pullItemFromList(user, "requiredActions", actionName, invocationContext);
+    }
+
+    @Override
+    public boolean isOtpEnabled() {
         return user.isTotp();
     }
 
     @Override
-    public void setTotp(boolean totp) {
+    public void setOtpEnabled(boolean totp) {
         user.setTotp(totp);
         updateUser();
     }
 
     @Override
     public void updateCredential(UserCredentialModel cred) {
+
+        if (cred.getType().equals(UserCredentialModel.PASSWORD)) {
+            updatePasswordCredential(cred);
+        } else if (UserCredentialModel.isOtp(cred.getType())){
+            updateOtpCredential(cred);
+        } else {
+            CredentialEntity credentialEntity = getCredentialEntity(user, cred.getType());
+
+            if (credentialEntity == null) {
+                credentialEntity = setCredentials(user, cred);
+                credentialEntity.setValue(cred.getValue());
+                user.getCredentials().add(credentialEntity);
+            } else {
+                credentialEntity.setValue(cred.getValue());
+            }
+        }
+        getMongoStore().updateEntity(user, invocationContext);
+    }
+
+    private void updateOtpCredential(UserCredentialModel cred) {
         CredentialEntity credentialEntity = getCredentialEntity(user, cred.getType());
 
         if (credentialEntity == null) {
-            credentialEntity = new CredentialEntity();
-            credentialEntity.setType(cred.getType());
-            credentialEntity.setDevice(cred.getDevice());
+            credentialEntity = setCredentials(user, cred);
+            credentialEntity.setValue(cred.getValue());
+            OTPPolicy otpPolicy = realm.getOTPPolicy();
+            credentialEntity.setAlgorithm(otpPolicy.getAlgorithm());
+            credentialEntity.setDigits(otpPolicy.getDigits());
+            credentialEntity.setCounter(otpPolicy.getInitialCounter());
+            credentialEntity.setPeriod(otpPolicy.getPeriod());
             user.getCredentials().add(credentialEntity);
-        }
-        if (cred.getType().equals(UserCredentialModel.PASSWORD)) {
-            byte[] salt = Pbkdf2PasswordEncoder.getSalt();
-            int hashIterations = 1;
-            PasswordPolicy policy = realm.getPasswordPolicy();
-            if (policy != null) {
-                hashIterations = policy.getHashIterations();
-                if (hashIterations == -1) hashIterations = 1;
-            }
-            credentialEntity.setValue(new Pbkdf2PasswordEncoder(salt).encode(cred.getValue(), hashIterations));
-            credentialEntity.setSalt(salt);
-            credentialEntity.setHashIterations(hashIterations);
         } else {
             credentialEntity.setValue(cred.getValue());
+            OTPPolicy policy = realm.getOTPPolicy();
+            credentialEntity.setDigits(policy.getDigits());
+            credentialEntity.setCounter(policy.getInitialCounter());
+            credentialEntity.setAlgorithm(policy.getAlgorithm());
+            credentialEntity.setPeriod(policy.getPeriod());
         }
-        credentialEntity.setDevice(cred.getDevice());
+    }
 
-        getMongoStore().updateEntity(user, invocationContext);
+
+    private void updatePasswordCredential(UserCredentialModel cred) {
+        CredentialEntity credentialEntity = getCredentialEntity(user, cred.getType());
+
+        if (credentialEntity == null) {
+            credentialEntity = setCredentials(user, cred);
+            setValue(credentialEntity, cred);
+            user.getCredentials().add(credentialEntity);
+        } else {
+
+            int expiredPasswordsPolicyValue = -1;
+            PasswordPolicy policy = realm.getPasswordPolicy();
+            if(policy != null) {
+                expiredPasswordsPolicyValue = policy.getExpiredPasswords();
+            }
+            
+            if (expiredPasswordsPolicyValue != -1) {
+                user.getCredentials().remove(credentialEntity);
+                credentialEntity.setType(UserCredentialModel.PASSWORD_HISTORY);
+                user.getCredentials().add(credentialEntity);
+
+                List<CredentialEntity> credentialEntities = getCredentialEntities(user, UserCredentialModel.PASSWORD_HISTORY);
+                if (credentialEntities.size() > expiredPasswordsPolicyValue - 1) {
+                    user.getCredentials().removeAll(credentialEntities.subList(expiredPasswordsPolicyValue - 1, credentialEntities.size()));
+                }
+
+                credentialEntity = setCredentials(user, cred);
+                setValue(credentialEntity, cred);
+                user.getCredentials().add(credentialEntity);
+            } else {
+                List<CredentialEntity> credentialEntities = getCredentialEntities(user, UserCredentialModel.PASSWORD_HISTORY);
+                if (credentialEntities != null && credentialEntities.size() > 0) {
+                    user.getCredentials().removeAll(credentialEntities);
+                }
+                setValue(credentialEntity, cred);
+            }
+        }
+    }
+    
+    private CredentialEntity setCredentials(MongoUserEntity user, UserCredentialModel cred) {
+        CredentialEntity credentialEntity = new CredentialEntity();
+        credentialEntity.setType(cred.getType());
+        credentialEntity.setDevice(cred.getDevice());
+        return credentialEntity;
+    }
+
+    private void setValue(CredentialEntity credentialEntity, UserCredentialModel cred) {
+        UserCredentialValueModel encoded = PasswordHashManager.encode(session, realm, cred.getValue());
+        credentialEntity.setCreatedDate(Time.toMillis(Time.currentTime()));
+        credentialEntity.setAlgorithm(encoded.getAlgorithm());
+        credentialEntity.setValue(encoded.getValue());
+        credentialEntity.setSalt(encoded.getSalt());
+        credentialEntity.setHashIterations(encoded.getHashIterations());
     }
 
     private CredentialEntity getCredentialEntity(MongoUserEntity userEntity, String credType) {
@@ -214,6 +362,30 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
         return null;
     }
 
+    private List<CredentialEntity> getCredentialEntities(MongoUserEntity userEntity, String credType) {
+        List<CredentialEntity> credentialEntities = new ArrayList<CredentialEntity>();
+        for (CredentialEntity entity : userEntity.getCredentials()) {
+            if (entity.getType().equals(credType)) {
+                credentialEntities.add(entity);
+            }
+        }
+        
+        // Avoiding direct use of credSecond.getCreatedDate() - credFirst.getCreatedDate() to prevent Integer Overflow
+        // Orders from most recent to least recent
+        Collections.sort(credentialEntities, new Comparator<CredentialEntity>() {
+            public int compare(CredentialEntity credFirst, CredentialEntity credSecond) {
+                if (credFirst.getCreatedDate() > credSecond.getCreatedDate()) {
+                    return -1;
+                } else if (credFirst.getCreatedDate() < credSecond.getCreatedDate()) {
+                    return 1;
+                } else {
+                    return 0;
+                }
+            }
+        });
+        return credentialEntities;
+    }
+
     @Override
     public List<UserCredentialValueModel> getCredentialsDirectly() {
         List<CredentialEntity> credentials = user.getCredentials();
@@ -222,9 +394,34 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
             UserCredentialValueModel credModel = new UserCredentialValueModel();
             credModel.setType(credEntity.getType());
             credModel.setDevice(credEntity.getDevice());
+            credModel.setCreatedDate(credEntity.getCreatedDate());
             credModel.setValue(credEntity.getValue());
             credModel.setSalt(credEntity.getSalt());
             credModel.setHashIterations(credEntity.getHashIterations());
+            credModel.setAlgorithm(credEntity.getAlgorithm());
+
+            if (UserCredentialModel.isOtp(credEntity.getType())) {
+                credModel.setCounter(credEntity.getCounter());
+                if (credEntity.getAlgorithm() == null) {
+                    // for migration where these values would be null
+                    credModel.setAlgorithm(realm.getOTPPolicy().getAlgorithm());
+                } else {
+                    credModel.setAlgorithm(credEntity.getAlgorithm());
+                }
+                if (credEntity.getDigits() == 0) {
+                    // for migration where these values would be 0
+                    credModel.setDigits(realm.getOTPPolicy().getDigits());
+                } else {
+                    credModel.setDigits(credEntity.getDigits());
+                }
+
+                if (credEntity.getPeriod() == 0) {
+                    // for migration where these values would be 0
+                    credModel.setPeriod(realm.getOTPPolicy().getPeriod());
+                } else {
+                    credModel.setPeriod(credEntity.getPeriod());
+                }
+            }
 
             result.add(credModel);
         }
@@ -239,6 +436,7 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
         if (credentialEntity == null) {
             credentialEntity = new CredentialEntity();
             credentialEntity.setType(credModel.getType());
+            credModel.setCreatedDate(credModel.getCreatedDate());
             user.getCredentials().add(credentialEntity);
         }
 
@@ -246,6 +444,10 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
         credentialEntity.setSalt(credModel.getSalt());
         credentialEntity.setDevice(credModel.getDevice());
         credentialEntity.setHashIterations(credModel.getHashIterations());
+        credentialEntity.setCounter(credModel.getCounter());
+        credentialEntity.setAlgorithm(credModel.getAlgorithm());
+        credentialEntity.setDigits(credModel.getDigits());
+        credentialEntity.setPeriod(credModel.getPeriod());
 
 
         getMongoStore().updateEntity(user, invocationContext);
@@ -261,14 +463,40 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
     }
 
     @Override
+    public Set<GroupModel> getGroups() {
+        if (user.getGroupIds() == null || user.getGroupIds().size() == 0) return Collections.EMPTY_SET;
+        Set<GroupModel> groups = new HashSet<>();
+        for (String id : user.getGroupIds()) {
+            groups.add(realm.getGroupById(id));
+        }
+        return groups;
+    }
+
+    @Override
+    public void joinGroup(GroupModel group) {
+        getMongoStore().pushItemToList(getUser(), "groupIds", group.getId(), true, invocationContext);
+
+    }
+
+    @Override
+    public void leaveGroup(GroupModel group) {
+        if (user == null || group == null) return;
+
+        getMongoStore().pullItemFromList(getUser(), "groupIds", group.getId(), invocationContext);
+
+    }
+
+    @Override
+    public boolean isMemberOf(GroupModel group) {
+        if (user.getGroupIds().contains(group.getId())) return true;
+        Set<GroupModel> groups = getGroups();
+        return KeycloakModelUtils.isMember(groups, group);
+    }
+
+    @Override
     public boolean hasRole(RoleModel role) {
         Set<RoleModel> roles = getRoleMappings();
-        if (roles.contains(role)) return true;
-
-        for (RoleModel mapping : roles) {
-            if (mapping.hasRole(role)) return true;
-        }
-        return false;
+        return KeycloakModelUtils.hasRole(roles, role);
     }
 
     @Override
@@ -278,30 +506,18 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
 
     @Override
     public Set<RoleModel> getRoleMappings() {
-        Set<RoleModel> result = new HashSet<RoleModel>();
-        List<MongoRoleEntity> roles = MongoModelUtils.getAllRolesOfUser(this, invocationContext);
-
-        for (MongoRoleEntity role : roles) {
-            if (realm.getId().equals(role.getRealmId())) {
-                result.add(new RoleAdapter(session, realm, role, realm, invocationContext));
-            } else {
-                // Likely applicationRole, but we don't have this application yet
-                result.add(new RoleAdapter(session, realm, role, invocationContext));
-            }
-        }
-        return result;
+        List<RoleModel> roles = MongoModelUtils.getAllRolesOfUser(realm, this);
+        return new HashSet<RoleModel>(roles);
     }
 
     @Override
     public Set<RoleModel> getRealmRoleMappings() {
         Set<RoleModel> allRoles = getRoleMappings();
 
-        // Filter to retrieve just realm roles TODO: Maybe improve to avoid filter programmatically... Maybe have separate fields for realmRoles and appRoles on user?
+        // Filter to retrieve just realm roles
         Set<RoleModel> realmRoles = new HashSet<RoleModel>();
         for (RoleModel role : allRoles) {
-            MongoRoleEntity roleEntity = ((RoleAdapter) role).getRole();
-
-            if (realm.getId().equals(roleEntity.getRealmId())) {
+            if (role.getContainer() instanceof RealmModel) {
                 realmRoles.add(role);
             }
         }
@@ -316,13 +532,13 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
     }
 
     @Override
-    public Set<RoleModel> getApplicationRoleMappings(ApplicationModel app) {
+    public Set<RoleModel> getClientRoleMappings(ClientModel app) {
         Set<RoleModel> result = new HashSet<RoleModel>();
-        List<MongoRoleEntity> roles = MongoModelUtils.getAllRolesOfUser(this, invocationContext);
+        List<RoleModel> roles = MongoModelUtils.getAllRolesOfUser(realm, this);
 
-        for (MongoRoleEntity role : roles) {
-            if (app.getId().equals(role.getApplicationId())) {
-                result.add(new RoleAdapter(session, realm, role, app, invocationContext));
+        for (RoleModel role : roles) {
+            if (app.equals(role.getContainer())) {
+                result.add(role);
             }
         }
         return result;
@@ -337,6 +553,120 @@ public class UserAdapter extends AbstractMongoAdapter<MongoUserEntity> implement
     public void setFederationLink(String link) {
         user.setFederationLink(link);
         updateUser();
+    }
+
+    @Override
+    public String getServiceAccountClientLink() {
+        return user.getServiceAccountClientLink();
+    }
+
+    @Override
+    public void setServiceAccountClientLink(String clientInternalId) {
+        user.setServiceAccountClientLink(clientInternalId);
+        updateUser();
+    }
+
+    @Override
+    public void addConsent(UserConsentModel consent) {
+        String clientId = consent.getClient().getId();
+        if (getConsentEntityByClientId(clientId) != null) {
+            throw new ModelDuplicateException("Consent already exists for client [" + clientId + "] and user [" + user.getId() + "]");
+        }
+
+        MongoUserConsentEntity consentEntity = new MongoUserConsentEntity();
+        consentEntity.setUserId(getId());
+        consentEntity.setClientId(clientId);
+        fillEntityFromModel(consent, consentEntity);
+        getMongoStore().insertEntity(consentEntity, invocationContext);
+    }
+
+    @Override
+    public UserConsentModel getConsentByClient(String clientId) {
+        UserConsentEntity consentEntity = getConsentEntityByClientId(clientId);
+        return consentEntity!=null ? toConsentModel(consentEntity) : null;
+    }
+
+    @Override
+    public List<UserConsentModel> getConsents() {
+        List<UserConsentModel> result = new ArrayList<UserConsentModel>();
+
+        DBObject query = new QueryBuilder()
+                .and("userId").is(getId())
+                .get();
+        List<MongoUserConsentEntity> grantedConsents = getMongoStore().loadEntities(MongoUserConsentEntity.class, query, invocationContext);
+
+        for (UserConsentEntity consentEntity : grantedConsents) {
+            UserConsentModel model = toConsentModel(consentEntity);
+            result.add(model);
+        }
+
+        return result;
+    }
+
+    private MongoUserConsentEntity getConsentEntityByClientId(String clientId) {
+        DBObject query = new QueryBuilder()
+                .and("userId").is(getId())
+                .and("clientId").is(clientId)
+                .get();
+        return getMongoStore().loadSingleEntity(MongoUserConsentEntity.class, query, invocationContext);
+    }
+
+    private UserConsentModel toConsentModel(UserConsentEntity entity) {
+        ClientModel client = realm.getClientById(entity.getClientId());
+        if (client == null) {
+            throw new ModelException("Client with id " + entity.getClientId() + " is not available");
+        }
+        UserConsentModel model = new UserConsentModel(client);
+
+        for (String roleId : entity.getGrantedRoles()) {
+            RoleModel roleModel = realm.getRoleById(roleId);
+            if (roleModel != null) {
+                model.addGrantedRole(roleModel);
+            }
+        }
+
+        for (String protMapperId : entity.getGrantedProtocolMappers()) {
+            ProtocolMapperModel protocolMapper = client.getProtocolMapperById(protMapperId);
+            model.addGrantedProtocolMapper(protocolMapper);
+        }
+        return model;
+    }
+
+    // Fill roles and protocolMappers to entity
+    private void fillEntityFromModel(UserConsentModel consent, MongoUserConsentEntity consentEntity) {
+        List<String> roleIds = new LinkedList<String>();
+        for (RoleModel role : consent.getGrantedRoles()) {
+            roleIds.add(role.getId());
+        }
+        consentEntity.setGrantedRoles(roleIds);
+
+        List<String> protMapperIds = new LinkedList<String>();
+        for (ProtocolMapperModel protMapperModel : consent.getGrantedProtocolMappers()) {
+            protMapperIds.add(protMapperModel.getId());
+        }
+        consentEntity.setGrantedProtocolMappers(protMapperIds);
+    }
+
+    @Override
+    public void updateConsent(UserConsentModel consent) {
+        String clientId = consent.getClient().getId();
+        MongoUserConsentEntity consentEntity = getConsentEntityByClientId(clientId);
+        if (consentEntity == null) {
+            throw new ModelException("Consent not found for client [" + clientId + "] and user [" + user.getId() + "]");
+        } else {
+            fillEntityFromModel(consent, consentEntity);
+            getMongoStore().updateEntity(consentEntity, invocationContext);
+        }
+    }
+
+    @Override
+    public boolean revokeConsentForClient(String clientId) {
+        MongoUserConsentEntity entity = getConsentEntityByClientId(clientId);
+        if (entity == null) {
+            return false;
+        }
+
+        return getMongoStore().removeEntity(entity, invocationContext);
     }
 
     @Override

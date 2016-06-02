@@ -1,11 +1,27 @@
 <?xml version="1.0"?>
+<!--
+  ~ Copyright 2016 Red Hat, Inc. and/or its affiliates
+  ~ and other contributors as indicated by the @author tags.
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~ http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <parent>
         <artifactId>keycloak-testsuite-pom</artifactId>
         <groupId>org.keycloak</groupId>
-        <version>1.2.0.Beta1-SNAPSHOT</version>
-        <relativePath>../pom.xml</relativePath>
+        <version>2.0.0.CR1-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -13,54 +29,47 @@
     <name>Keycloak Integration TestSuite</name>
     <description />
 
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.keycloak</groupId>
-                <artifactId>keycloak-as7-adapter</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-
     <dependencies>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk15on</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk15on</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.keycloak</groupId>
             <artifactId>keycloak-dependencies-server-all</artifactId>
-            <version>${project.version}</version>
             <type>pom</type>
         </dependency>
         <dependency>
             <groupId>org.keycloak</groupId>
             <artifactId>keycloak-admin-client</artifactId>
-            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-wildfly-adduser</artifactId>
         </dependency>
         <dependency>
             <groupId>log4j</groupId>
             <artifactId>log4j</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-log4j12</artifactId>
-            <version>${slf4j.version}</version>
-        </dependency>
-        <dependency>
             <groupId>org.jboss.spec.javax.servlet</groupId>
             <artifactId>jboss-servlet-api_3.0_spec</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.jboss.spec.javax.ws.rs</groupId>
+            <artifactId>jboss-jaxrs-api_2.0_spec</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.jboss.resteasy</groupId>
-            <artifactId>jaxrs-api</artifactId>
-            <version>${resteasy.version.latest}</version>
+            <artifactId>async-http-servlet-3.0</artifactId>
         </dependency>
         <dependency>
             <groupId>org.jboss.resteasy</groupId>
             <artifactId>resteasy-jaxrs</artifactId>
-            <version>${resteasy.version.latest}</version>
             <exclusions>
                 <exclusion>
                     <groupId>log4j</groupId>
@@ -79,60 +88,70 @@
         <dependency>
             <groupId>org.jboss.resteasy</groupId>
             <artifactId>resteasy-client</artifactId>
-            <version>${resteasy.version.latest}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.jboss.resteasy</groupId>
-            <artifactId>resteasy-crypto</artifactId>
-            <version>${resteasy.version.latest}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.jboss.resteasy</groupId>
-            <artifactId>resteasy-multipart-provider</artifactId>
-            <version>${resteasy.version.latest}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.jboss.resteasy</groupId>
-            <artifactId>resteasy-jackson-provider</artifactId>
-            <version>${resteasy.version.latest}</version>
         </dependency>
         <dependency>
             <groupId>org.jboss.resteasy</groupId>
             <artifactId>resteasy-undertow</artifactId>
-            <version>${resteasy.version.latest}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss.resteasy</groupId>
+            <artifactId>resteasy-multipart-provider</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss.resteasy</groupId>
+            <artifactId>resteasy-jackson2-provider</artifactId>
         </dependency>
         <dependency>
             <groupId>com.google.zxing</groupId>
             <artifactId>javase</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk16</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.apache.httpcomponents</groupId>
             <artifactId>httpclient</artifactId>
-            <version>${keycloak.apache.httpcomponents.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-server-spi</artifactId>
         </dependency>
         <dependency>
             <groupId>org.keycloak</groupId>
             <artifactId>keycloak-ldap-federation</artifactId>
-            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-kerberos-federation</artifactId>
         </dependency>
         <dependency>
             <groupId>org.keycloak</groupId>
             <artifactId>keycloak-undertow-adapter</artifactId>
-            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-saml-adapter-api-public</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-saml-adapter-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-saml-servlet-filter-adapter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-servlet-filter-adapter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-saml-undertow-adapter</artifactId>
         </dependency>
         <dependency>
             <groupId>org.keycloak</groupId>
             <artifactId>keycloak-jaxrs-oauth-client</artifactId>
-            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>org.keycloak</groupId>
             <artifactId>federation-properties-example</artifactId>
-            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>org.jboss.logging</groupId>
@@ -147,16 +166,16 @@
             <artifactId>undertow-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.codehaus.jackson</groupId>
-            <artifactId>jackson-core-asl</artifactId>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.codehaus.jackson</groupId>
-            <artifactId>jackson-mapper-asl</artifactId>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.codehaus.jackson</groupId>
-            <artifactId>jackson-xc</artifactId>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
@@ -168,7 +187,7 @@
         </dependency>
         <dependency>
             <groupId>org.hibernate.javax.persistence</groupId>
-            <artifactId>hibernate-jpa-2.0-api</artifactId>
+            <artifactId>hibernate-jpa-2.1-api</artifactId>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>
@@ -204,15 +223,13 @@
             <groupId>org.seleniumhq.selenium</groupId>
             <artifactId>selenium-chrome-driver</artifactId>
         </dependency>
+
+        <!-- Apache DS -->
         <dependency>
-            <groupId>org.picketbox</groupId>
-            <artifactId>picketbox-ldap</artifactId>
-            <type>test-jar</type>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-util-embedded-ldap</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.picketbox</groupId>
-            <artifactId>picketbox-ldap</artifactId>
-        </dependency>
+
         <dependency>
             <groupId>org.picketlink</groupId>
             <artifactId>picketlink-wildfly-common</artifactId>
@@ -221,8 +238,22 @@
         <dependency>
             <groupId>org.wildfly</groupId>
             <artifactId>wildfly-undertow</artifactId>
-            <version>${wildfly.version}</version>
             <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.mariadb.jdbc</groupId>
+            <artifactId>mariadb-java-client</artifactId>
+            <version>${mariadb.version}</version>
         </dependency>
 
     </dependencies>
@@ -262,6 +293,19 @@
                     <workingDirectory>${project.basedir}</workingDirectory>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.apache.felix</groupId>
+                <artifactId>maven-bundle-plugin</artifactId>
+                <inherited>true</inherited>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
@@ -274,7 +318,8 @@
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
                         <configuration>
-                            <mainClass>org.keycloak.testutils.KeycloakServer</mainClass>
+                            <mainClass>org.keycloak.testsuite.KeycloakServer</mainClass>
+                            <classpathScope>test</classpathScope>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -288,7 +333,8 @@
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
                         <configuration>
-                            <mainClass>org.keycloak.testutils.MailServer</mainClass>
+                            <mainClass>org.keycloak.testsuite.MailServer</mainClass>
+                            <classpathScope>test</classpathScope>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -302,7 +348,38 @@
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
                         <configuration>
-                            <mainClass>org.keycloak.testutils.TotpGenerator</mainClass>
+                            <mainClass>org.keycloak.testsuite.TotpGenerator</mainClass>
+                            <classpathScope>test</classpathScope>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>ldap</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <configuration>
+                            <mainClass>org.keycloak.util.ldap.LDAPEmbeddedServer</mainClass>
+                            <classpathScope>test</classpathScope>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>kerberos</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <configuration>
+                            <mainClass>org.keycloak.util.ldap.KerberosEmbeddedServer</mainClass>
+                            <classpathScope>test</classpathScope>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -321,8 +398,10 @@
                             <systemPropertyVariables>
                                 <keycloak.realm.provider>jpa</keycloak.realm.provider>
                                 <keycloak.user.provider>jpa</keycloak.user.provider>
-                                <keycloak.eventStore.provider>jpa</keycloak.eventStore.provider>
-                                <keycloak.userSessions.provider>jpa</keycloak.userSessions.provider>
+                                <keycloak.userSessionPersister.provider>jpa</keycloak.userSessionPersister.provider>
+                                <keycloak.eventsStore.provider>jpa</keycloak.eventsStore.provider>
+
+                                <keycloak.liquibase.logging.level>debug</keycloak.liquibase.logging.level>
                             </systemPropertyVariables>
                         </configuration>
                     </plugin>
@@ -337,7 +416,6 @@
                 <keycloak.connectionsMongo.host>localhost</keycloak.connectionsMongo.host>
                 <keycloak.connectionsMongo.port>27018</keycloak.connectionsMongo.port>
                 <keycloak.connectionsMongo.db>keycloak</keycloak.connectionsMongo.db>
-                <keycloak.connectionsMongo.clearOnStartup>true</keycloak.connectionsMongo.clearOnStartup>
                 <keycloak.connectionsMongo.bindIp>127.0.0.1</keycloak.connectionsMongo.bindIp>
             </properties>
 
@@ -359,12 +437,11 @@
                                     <systemPropertyVariables>
                                         <keycloak.realm.provider>mongo</keycloak.realm.provider>
                                         <keycloak.user.provider>mongo</keycloak.user.provider>
-                                        <keycloak.audit.provider>mongo</keycloak.audit.provider>
-                                        <keycloak.userSessions.provider>mongo</keycloak.userSessions.provider>
+                                        <keycloak.userSessionPersister.provider>mongo</keycloak.userSessionPersister.provider>
+                                        <keycloak.eventsStore.provider>mongo</keycloak.eventsStore.provider>
                                         <keycloak.connectionsMongo.host>${keycloak.connectionsMongo.host}</keycloak.connectionsMongo.host>
                                         <keycloak.connectionsMongo.port>${keycloak.connectionsMongo.port}</keycloak.connectionsMongo.port>
                                         <keycloak.connectionsMongo.db>${keycloak.connectionsMongo.db}</keycloak.connectionsMongo.db>
-                                        <keycloak.connectionsMongo.clearOnStartup>${keycloak.connectionsMongo.clearOnStartup}</keycloak.connectionsMongo.clearOnStartup>
                                         <keycloak.connectionsMongo.bindIp>${keycloak.connectionsMongo.bindIp}</keycloak.connectionsMongo.bindIp>
                                     </systemPropertyVariables>
                                 </configuration>
@@ -411,62 +488,6 @@
         </profile>
 
         <profile>
-            <id>infinispan</id>
-
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-surefire-plugin</artifactId>
-                        <configuration>
-                            <systemPropertyVariables>
-                                <keycloak.realm.cache.provider>infinispan</keycloak.realm.cache.provider>
-                                <keycloak.user.cache.provider>infinispan</keycloak.user.cache.provider>
-                                <keycloak.userSessions.provider>infinispan</keycloak.userSessions.provider>
-                            </systemPropertyVariables>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-
-        <!-- MySQL -->
-        <profile>
-            <activation>
-                <property>
-                    <name>keycloak.connectionsJpa.driver</name>
-                    <value>com.mysql.jdbc.Driver</value>
-                </property>
-            </activation>
-            <id>mysql</id>
-            <dependencies>
-                <dependency>
-                    <groupId>mysql</groupId>
-                    <artifactId>mysql-connector-java</artifactId>
-                    <version>${mysql.version}</version>
-                </dependency>
-            </dependencies>
-        </profile>
-
-        <!-- PostgreSQL -->
-        <profile>
-            <activation>
-                <property>
-                    <name>keycloak.connectionsJpa.driver</name>
-                    <value>org.postgresql.Driver</value>
-                </property>
-            </activation>
-            <id>postgresql</id>
-            <dependencies>
-                <dependency>
-                    <groupId>org.postgresql</groupId>
-                    <artifactId>postgresql</artifactId>
-                    <version>${postgresql.version}</version>
-                </dependency>
-            </dependencies>
-        </profile>
-
-        <profile>
             <id>clean-jpa</id>
             <build>
                 <plugins>
@@ -482,6 +503,7 @@
                             <password>${keycloak.connectionsJpa.password}</password>
 
                             <promptOnNonLocalDatabase>false</promptOnNonLocalDatabase>
+                            <databaseClass>${keycloak.connectionsJpa.liquibaseDatabaseClass}</databaseClass>
                         </configuration>
                         <executions>
                             <execution>
@@ -496,5 +518,33 @@
                 </plugins>
             </build>
         </profile>
+
+        <!-- Ldap profiles -->
+        <profile>
+            <activation>
+                <property>
+                    <name>ldap.vendor</name>
+                    <value>msad</value>
+                </property>
+            </activation>
+            <id>msad</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <includes>
+                                <include>org/keycloak/testsuite/federation/ldap/base/**</include>
+                            </includes>
+                            <excludes>
+                                <exclude>**/LDAPMultipleAttributesTest.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
     </profiles>
 </project>

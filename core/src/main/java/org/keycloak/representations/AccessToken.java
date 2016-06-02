@@ -1,7 +1,24 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.representations;
 
-import org.codehaus.jackson.annotate.JsonIgnore;
-import org.codehaus.jackson.annotate.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.io.Serializable;
 import java.util.HashMap;
@@ -64,6 +81,9 @@ public class AccessToken extends IDToken {
         }
     }
 
+    @JsonProperty("client_session")
+    protected String clientSession;
+
     @JsonProperty("trusted-certs")
     protected Set<String> trustedCertificates;
 
@@ -117,10 +137,21 @@ public class AccessToken extends IDToken {
         return resourceAccess.get(resource);
     }
 
+    public String getClientSession() {
+        return clientSession;
+    }
+
     public Access addAccess(String service) {
-        Access token = new Access();
-        resourceAccess.put(service, token);
-        return token;
+        Access access = resourceAccess.get(service);
+        if (access != null) return access;
+        access = new Access();
+        resourceAccess.put(service, access);
+        return access;
+    }
+
+    public AccessToken clientSession(String session) {
+        this.clientSession = session;
+        return this;
     }
 
     @Override
@@ -147,11 +178,6 @@ public class AccessToken extends IDToken {
     @Override
     public AccessToken issuer(String issuer) {
         return (AccessToken) super.issuer(issuer);
-    }
-
-    @Override
-    public AccessToken audience(String audience) {
-        return (AccessToken) super.audience(audience);
     }
 
     @Override

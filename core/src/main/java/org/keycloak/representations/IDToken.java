@@ -1,95 +1,118 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.representations;
 
-import org.codehaus.jackson.annotate.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
 public class IDToken extends JsonWebToken {
-    @JsonProperty("nonce")
+    public static final String NONCE = "nonce";
+    public static final String SESSION_STATE = "session_state";
+    public static final String NAME = "name";
+    public static final String GIVEN_NAME = "given_name";
+    public static final String FAMILY_NAME = "family_name";
+    public static final String MIDDLE_NAME = "middle_name";
+    public static final String NICKNAME = "nickname";
+    public static final String PREFERRED_USERNAME = "preferred_username";
+    public static final String PROFILE = "profile";
+    public static final String PICTURE = "picture";
+    public static final String WEBSITE = "website";
+    public static final String EMAIL = "email";
+    public static final String EMAIL_VERIFIED = "email_verified";
+    public static final String GENDER = "gender";
+    public static final String BIRTHDATE = "birthdate";
+    public static final String ZONEINFO = "zoneinfo";
+    public static final String LOCALE = "locale";
+    public static final String PHONE_NUMBER = "phone_number";
+    public static final String PHONE_NUMBER_VERIFIED = "phone_number_verified";
+    public static final String ADDRESS = "address";
+    public static final String UPDATED_AT = "updated_at";
+    public static final String CLAIMS_LOCALES = "claims_locales";
+    // NOTE!!!  WE used to use @JsonUnwrapped on a UserClaimSet object.  This screws up otherClaims and the won't work
+    // anymore.  So don't have any @JsonUnwrapped!
+    @JsonProperty(NONCE)
     protected String nonce;
 
-    @JsonProperty("name")
+    @JsonProperty(SESSION_STATE)
+    protected String sessionState;
+
+    @JsonProperty(NAME)
     protected String name;
 
-    @JsonProperty("given_name")
+    @JsonProperty(GIVEN_NAME)
     protected String givenName;
 
-    @JsonProperty("family_name")
+    @JsonProperty(FAMILY_NAME)
     protected String familyName;
 
-    @JsonProperty("middle_name")
+    @JsonProperty(MIDDLE_NAME)
     protected String middleName;
 
-    @JsonProperty("nickname")
+    @JsonProperty(NICKNAME)
     protected String nickName;
 
-    @JsonProperty("preferred_username")
+    @JsonProperty(PREFERRED_USERNAME)
     protected String preferredUsername;
 
-    @JsonProperty("profile")
+    @JsonProperty(PROFILE)
     protected String profile;
 
-    @JsonProperty("picture")
+    @JsonProperty(PICTURE)
     protected String picture;
 
-    @JsonProperty("website")
+    @JsonProperty(WEBSITE)
     protected String website;
 
-    @JsonProperty("email")
+    @JsonProperty(EMAIL)
     protected String email;
 
-    @JsonProperty("email_verified")
+    @JsonProperty(EMAIL_VERIFIED)
     protected Boolean emailVerified;
 
-    @JsonProperty("gender")
+    @JsonProperty(GENDER)
     protected String gender;
 
-    @JsonProperty("birthdate")
+    @JsonProperty(BIRTHDATE)
     protected String birthdate;
 
-    @JsonProperty("zoneinfo")
+    @JsonProperty(ZONEINFO)
     protected String zoneinfo;
 
-    @JsonProperty("locale")
+    @JsonProperty(LOCALE)
     protected String locale;
 
-    @JsonProperty("phone_number")
+    @JsonProperty(PHONE_NUMBER)
     protected String phoneNumber;
 
-    @JsonProperty("phone_number_verified")
+    @JsonProperty(PHONE_NUMBER_VERIFIED)
     protected Boolean phoneNumberVerified;
 
-    @JsonProperty("address")
-    protected String address;
+    @JsonProperty(ADDRESS)
+    protected AddressClaimSet address;
 
-    @JsonProperty("updated_at")
+    @JsonProperty(UPDATED_AT)
     protected Long updatedAt;
 
-    @JsonProperty("formatted")
-    protected String formattedAddress;
-
-    @JsonProperty("street_address")
-    protected String streetAddress;
-
-    @JsonProperty("locality")
-    protected String locality;
-
-    @JsonProperty("region")
-    protected String region;
-
-    @JsonProperty("postal_code")
-    protected String postalCode;
-
-    @JsonProperty("country")
-    protected String country;
-
-    @JsonProperty("claims_locales")
+    @JsonProperty(CLAIMS_LOCALES)
     protected String claimsLocales;
-
-    @JsonProperty("session_state")
-    protected String sessionState;
 
     public String getNonce() {
         return nonce;
@@ -99,214 +122,6 @@ public class IDToken extends JsonWebToken {
         this.nonce = nonce;
     }
 
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public String getGivenName() {
-        return givenName;
-    }
-
-    public void setGivenName(String givenName) {
-        this.givenName = givenName;
-    }
-
-    public String getFamilyName() {
-        return familyName;
-    }
-
-    public void setFamilyName(String familyName) {
-        this.familyName = familyName;
-    }
-
-    public String getMiddleName() {
-        return middleName;
-    }
-
-    public void setMiddleName(String middleName) {
-        this.middleName = middleName;
-    }
-
-    public String getNickName() {
-        return nickName;
-    }
-
-    public void setNickName(String nickName) {
-        this.nickName = nickName;
-    }
-
-    public String getPreferredUsername() {
-        return preferredUsername;
-    }
-
-    public void setPreferredUsername(String preferredUsername) {
-        this.preferredUsername = preferredUsername;
-    }
-
-    public String getProfile() {
-        return profile;
-    }
-
-    public void setProfile(String profile) {
-        this.profile = profile;
-    }
-
-    public String getPicture() {
-        return picture;
-    }
-
-    public void setPicture(String picture) {
-        this.picture = picture;
-    }
-
-    public String getWebsite() {
-        return website;
-    }
-
-    public void setWebsite(String website) {
-        this.website = website;
-    }
-
-    public String getEmail() {
-        return email;
-    }
-
-    public void setEmail(String email) {
-        this.email = email;
-    }
-
-    public Boolean getEmailVerified() {
-        return emailVerified;
-    }
-
-    public void setEmailVerified(Boolean emailVerified) {
-        this.emailVerified = emailVerified;
-    }
-
-    public String getGender() {
-        return gender;
-    }
-
-    public void setGender(String gender) {
-        this.gender = gender;
-    }
-
-    public String getBirthdate() {
-        return birthdate;
-    }
-
-    public void setBirthdate(String birthdate) {
-        this.birthdate = birthdate;
-    }
-
-    public String getZoneinfo() {
-        return zoneinfo;
-    }
-
-    public void setZoneinfo(String zoneinfo) {
-        this.zoneinfo = zoneinfo;
-    }
-
-    public String getLocale() {
-        return locale;
-    }
-
-    public void setLocale(String locale) {
-        this.locale = locale;
-    }
-
-    public String getPhoneNumber() {
-        return phoneNumber;
-    }
-
-    public void setPhoneNumber(String phoneNumber) {
-        this.phoneNumber = phoneNumber;
-    }
-
-    public Boolean getPhoneNumberVerified() {
-        return phoneNumberVerified;
-    }
-
-    public void setPhoneNumberVerified(Boolean phoneNumberVerified) {
-        this.phoneNumberVerified = phoneNumberVerified;
-    }
-
-    public String getAddress() {
-        return address;
-    }
-
-    public void setAddress(String address) {
-        this.address = address;
-    }
-
-    public Long getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public void setUpdatedAt(Long updatedAt) {
-        this.updatedAt = updatedAt;
-    }
-
-    public String getFormattedAddress() {
-        return formattedAddress;
-    }
-
-    public void setFormattedAddress(String formattedAddress) {
-        this.formattedAddress = formattedAddress;
-    }
-
-    public String getStreetAddress() {
-        return streetAddress;
-    }
-
-    public void setStreetAddress(String streetAddress) {
-        this.streetAddress = streetAddress;
-    }
-
-    public String getLocality() {
-        return locality;
-    }
-
-    public void setLocality(String locality) {
-        this.locality = locality;
-    }
-
-    public String getRegion() {
-        return region;
-    }
-
-    public void setRegion(String region) {
-        this.region = region;
-    }
-
-    public String getPostalCode() {
-        return postalCode;
-    }
-
-    public void setPostalCode(String postalCode) {
-        this.postalCode = postalCode;
-    }
-
-    public String getCountry() {
-        return country;
-    }
-
-    public void setCountry(String country) {
-        this.country = country;
-    }
-
-    public String getClaimsLocales() {
-        return claimsLocales;
-    }
-
-    public void setClaimsLocales(String claimsLocales) {
-        this.claimsLocales = claimsLocales;
-    }
-
     public String getSessionState() {
         return sessionState;
     }
@@ -314,4 +129,165 @@ public class IDToken extends JsonWebToken {
     public void setSessionState(String sessionState) {
         this.sessionState = sessionState;
     }
+
+    public String getName() {
+        return this.name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getGivenName() {
+        return this.givenName;
+    }
+
+    public void setGivenName(String givenName) {
+        this.givenName = givenName;
+    }
+
+    public String getFamilyName() {
+        return this.familyName;
+    }
+
+    public void setFamilyName(String familyName) {
+        this.familyName = familyName;
+    }
+
+    public String getMiddleName() {
+        return this.middleName;
+    }
+
+    public void setMiddleName(String middleName) {
+        this.middleName = middleName;
+    }
+
+    public String getNickName() {
+        return this.nickName;
+    }
+
+    public void setNickName(String nickName) {
+        this.nickName = nickName;
+    }
+
+    public String getPreferredUsername() {
+        return this.preferredUsername;
+    }
+
+    public void setPreferredUsername(String preferredUsername) {
+        this.preferredUsername = preferredUsername;
+    }
+
+    public String getProfile() {
+        return this.profile;
+    }
+
+    public void setProfile(String profile) {
+        this.profile = profile;
+    }
+
+    public String getPicture() {
+        return this.picture;
+    }
+
+    public void setPicture(String picture) {
+        this.picture = picture;
+    }
+
+    public String getWebsite() {
+        return this.website;
+    }
+
+    public void setWebsite(String website) {
+        this.website = website;
+    }
+
+    public String getEmail() {
+        return this.email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public Boolean getEmailVerified() {
+        return this.emailVerified;
+    }
+
+    public void setEmailVerified(Boolean emailVerified) {
+        this.emailVerified = emailVerified;
+    }
+
+    public String getGender() {
+        return this.gender;
+    }
+
+    public void setGender(String gender) {
+        this.gender = gender;
+    }
+
+    public String getBirthdate() {
+        return this.birthdate;
+    }
+
+    public void setBirthdate(String birthdate) {
+        this.birthdate = birthdate;
+    }
+
+    public String getZoneinfo() {
+        return this.zoneinfo;
+    }
+
+    public void setZoneinfo(String zoneinfo) {
+        this.zoneinfo = zoneinfo;
+    }
+
+    public String getLocale() {
+        return this.locale;
+    }
+
+    public void setLocale(String locale) {
+        this.locale = locale;
+    }
+
+    public String getPhoneNumber() {
+        return this.phoneNumber;
+    }
+
+    public void setPhoneNumber(String phoneNumber) {
+        this.phoneNumber = phoneNumber;
+    }
+
+    public Boolean getPhoneNumberVerified() {
+        return this.phoneNumberVerified;
+    }
+
+    public void setPhoneNumberVerified(Boolean phoneNumberVerified) {
+        this.phoneNumberVerified = phoneNumberVerified;
+    }
+
+    public AddressClaimSet getAddress() {
+        return address;
+    }
+
+    public void setAddress(AddressClaimSet address) {
+        this.address = address;
+    }
+
+    public Long getUpdatedAt() {
+        return this.updatedAt;
+    }
+
+    public void setUpdatedAt(Long updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public String getClaimsLocales() {
+        return this.claimsLocales;
+    }
+
+    public void setClaimsLocales(String claimsLocales) {
+        this.claimsLocales = claimsLocales;
+    }
+
 }

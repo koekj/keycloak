@@ -1,14 +1,33 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.example.oauth;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.keycloak.KeycloakSecurityContext;
 import org.keycloak.adapters.ServerRequest;
 import org.keycloak.representations.AccessTokenResponse;
 import org.keycloak.servlet.ServletOAuthClient;
 import org.keycloak.util.JsonSerialization;
-import org.keycloak.util.UriUtils;
+import org.keycloak.common.util.UriUtils;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -70,15 +89,17 @@ public class ProductDatabaseClient {
     }
 
     public static List<String> getProducts(HttpServletRequest request, String accessToken) throws Failure {
+        KeycloakSecurityContext session = (KeycloakSecurityContext) request.getAttribute(KeycloakSecurityContext.class.getName());
+
         // The ServletOAuthClient is obtained by getting a context attribute
         // that is set in the Bootstrap context listener in this project.
         // You really should come up with a better way to initialize
         // and obtain the ServletOAuthClient.  I actually suggest downloading the ServletOAuthClient code
         // and take a look how it works. You can also take a look at third-party-cdi example
         ServletOAuthClient oAuthClient = (ServletOAuthClient) request.getServletContext().getAttribute(ServletOAuthClient.class.getName());
-        HttpClient client = oAuthClient.getClient();
+        HttpClient client = new DefaultHttpClient();
 
-        HttpGet get = new HttpGet(getBaseUrl(oAuthClient, request) + "/database/products");
+        HttpGet get = new HttpGet(UriUtils.getOrigin(request.getRequestURL().toString()) + "/database/products");
         get.addHeader("Authorization", "Bearer " + accessToken);
         try {
             HttpResponse response = client.execute(get);
@@ -94,21 +115,6 @@ public class ProductDatabaseClient {
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
-        }
-    }
-
-    public static String getBaseUrl(ServletOAuthClient oAuthClient, HttpServletRequest request) {
-        switch (oAuthClient.getRelativeUrlsUsed()) {
-            case ALL_REQUESTS:
-                // Resolve baseURI from the request
-                return UriUtils.getOrigin(request.getRequestURL().toString());
-            case BROWSER_ONLY:
-                // Resolve baseURI from the codeURL (This is already non-relative and based on our hostname)
-                return UriUtils.getOrigin(oAuthClient.getCodeUrl());
-            case NEVER:
-                return "";
-            default:
-                return "";
         }
     }
 

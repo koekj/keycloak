@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.testsuite.exportimport;
 
 import org.junit.Assert;
@@ -10,7 +27,6 @@ import org.keycloak.exportimport.ExportImportConfig;
 import org.keycloak.exportimport.dir.DirExportProvider;
 import org.keycloak.exportimport.dir.DirExportProviderFactory;
 import org.keycloak.exportimport.singlefile.SingleFileExportProviderFactory;
-import org.keycloak.exportimport.zip.ZipExportProviderFactory;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RealmProvider;
@@ -26,6 +42,7 @@ import org.keycloak.testsuite.rule.KeycloakRule;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URL;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -34,6 +51,8 @@ import java.util.Set;
 import java.util.regex.Matcher;
 
 /**
+ * TODO: Move to integration-arquillian and make subclass of AbstractExportImportTest
+ *
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
  */
 public class ExportImportTest {
@@ -41,13 +60,9 @@ public class ExportImportTest {
     private static SystemPropertiesHelper propsHelper = new SystemPropertiesHelper();
 
     private static final String JPA_CONNECTION_URL = "keycloak.connectionsJpa.url";
-    private static final String JPA_DB_SCHEMA = "keycloak.connectionsJpa.databaseSchema";
-    private static final String MONGO_CLEAR_ON_STARTUP = "keycloak.connectionsMongo.clearOnStartup";
 
     // We want data to be persisted among server restarts
     private static ExternalResource persistenceSetupRule = new ExternalResource() {
-
-        private boolean connectionURLSet = false;
 
         @Override
         protected void before() throws Throwable {
@@ -61,31 +76,12 @@ public class ExportImportTest {
 
                 String dbDir = baseExportImportDir + "/keycloakDB";
                 propsHelper.pushProperty(JPA_CONNECTION_URL, "jdbc:h2:file:" + dbDir + ";DB_CLOSE_DELAY=-1");
-                connectionURLSet = true;
             }
-            propsHelper.pushProperty(JPA_DB_SCHEMA, "update");
         }
 
         @Override
         protected void after() {
-            if (connectionURLSet) {
-                propsHelper.pullProperty(JPA_CONNECTION_URL);
-            }
-        }
-    };
-
-    private static ExternalResource outerPersistenceSetupRule = new ExternalResource() {
-
-        @Override
-        protected void before() throws Throwable {
-            System.setProperty(JPA_DB_SCHEMA, "update");
-            propsHelper.pushProperty(MONGO_CLEAR_ON_STARTUP, "false");
-        }
-
-        @Override
-        protected void after() {
-            propsHelper.pullProperty(JPA_DB_SCHEMA);
-            propsHelper.pullProperty(MONGO_CLEAR_ON_STARTUP);
+            propsHelper.pullProperty(JPA_CONNECTION_URL);
         }
     };
 
@@ -113,6 +109,8 @@ public class ExportImportTest {
         protected void after() {
             super.after();
 
+            // TODO: Make this subclass of AbstractExportImportTest and use AbstractExportImportTest.clearExportImportProperties
+
             // Clear export/import properties after test
             Properties systemProps = System.getProperties();
             Set<String> propsToRemove = new HashSet<String>();
@@ -136,8 +134,7 @@ public class ExportImportTest {
     @ClassRule
     public static TestRule chain = RuleChain
             .outerRule(persistenceSetupRule)
-            .around(keycloakRule)
-            .around(outerPersistenceSetupRule);
+            .around(keycloakRule);
 
     @Test
     public void testDirFullExportImport() throws Throwable {
@@ -149,8 +146,8 @@ public class ExportImportTest {
 
         testFullExportImport();
 
-        // There should be 6 files in target directory (3 realm, 3 user, 1 version)
-        Assert.assertEquals(7, new File(targetDirPath).listFiles().length);
+        // There should be 6 files in target directory (3 realm, 3 user)
+        Assert.assertEquals(6, new File(targetDirPath).listFiles().length);
     }
 
     @Test
@@ -163,8 +160,9 @@ public class ExportImportTest {
 
         testRealmExportImport();
 
-        // There should be 3 files in target directory (1 realm, 2 user, 1 version)
-        Assert.assertEquals(4, new File(targetDirPath).listFiles().length);
+        // There should be 3 files in target directory (1 realm, 3 user)
+        File[] files = new File(targetDirPath).listFiles();
+        Assert.assertEquals(4, files.length);
     }
 
     @Test
@@ -186,27 +184,34 @@ public class ExportImportTest {
     }
 
     @Test
-    public void testZipFullExportImport() throws Throwable {
-        ExportImportConfig.setProvider(ZipExportProviderFactory.PROVIDER_ID);
-        String zipFilePath = getExportImportTestDirectory() + File.separator + "export-full.zip";
-        new File(zipFilePath).delete();
-        ExportImportConfig.setZipFile(zipFilePath);
-        ExportImportConfig.setZipPassword("encPassword");
-        ExportImportConfig.setUsersPerFile(ExportImportConfig.DEFAULT_USERS_PER_FILE);
+    public void testSingleFileRealmWithoutBuiltinsImport() throws Throwable {
+        // Remove test realm
+        KeycloakSession session = keycloakRule.startSession();
+        try {
+            new RealmManager(session).removeRealm(session.realms().getRealmByName("test-realm"));
+        } finally {
+            keycloakRule.stopSession(session, true);
+        }
 
-        testFullExportImport();
-    }
+        // Set the realm, which doesn't have builtin clients/roles inside JSON
+        ExportImportConfig.setProvider(SingleFileExportProviderFactory.PROVIDER_ID);
+        URL url = ExportImportTest.class.getResource("/model/testrealm.json");
+        String targetFilePath = new File(url.getFile()).getAbsolutePath();
+        ExportImportConfig.setFile(targetFilePath);
 
-    @Test
-    public void testZipRealmExportImport() throws Throwable {
-        ExportImportConfig.setProvider(ZipExportProviderFactory.PROVIDER_ID);
-        String zipFilePath = getExportImportTestDirectory() + File.separator + "export-realm.zip";
-        new File(zipFilePath).delete();
-        ExportImportConfig.setZipFile(zipFilePath);
-        ExportImportConfig.setZipPassword("encPassword");
-        ExportImportConfig.setUsersPerFile(3);
+        ExportImportConfig.setAction(ExportImportConfig.ACTION_IMPORT);
 
-        testRealmExportImport();
+        // Restart server to trigger import
+        keycloakRule.restartServer();
+
+        // Ensure realm imported
+        session = keycloakRule.startSession();
+        try {
+            RealmModel testRealmRealm = session.realms().getRealmByName("test-realm");
+            ImportTest.assertDataImportedInRealm(session, testRealmRealm);
+        } finally {
+            keycloakRule.stopSession(session, true);
+        }
     }
 
     private void testFullExportImport() {
@@ -222,7 +227,8 @@ public class ExportImportTest {
             RealmProvider realmProvider = session.realms();
             UserProvider userProvider = session.users();
             new RealmManager(session).removeRealm(realmProvider.getRealmByName("test"));
-            Assert.assertEquals(2, realmProvider.getRealms().size());
+            new RealmManager(session).removeRealm(realmProvider.getRealmByName("test-realm"));
+            Assert.assertEquals(1, realmProvider.getRealms().size());
 
             assertNotAuthenticated(userProvider, realmProvider, "test", "test-user@localhost", "password");
             assertNotAuthenticated(userProvider, realmProvider, "test", "user1", "password");
@@ -250,7 +256,7 @@ public class ExportImportTest {
             assertAuthenticated(userProvider, model, "test", "user2", "password");
             assertAuthenticated(userProvider, model, "test", "user3", "password");
 
-            RealmModel testRealmRealm = model.getRealm("test-realm");
+            RealmModel testRealmRealm = model.getRealmByName("test-realm");
             ImportTest.assertDataImportedInRealm(session, testRealmRealm);
         } finally {
             keycloakRule.stopSession(session, true);
@@ -313,7 +319,12 @@ public class ExportImportTest {
             Assert.fail("user " + username + " not found");
         }
 
-        Assert.assertTrue(userProvider.validCredentials(realm, user, UserCredentialModel.password(password)));
+        KeycloakSession session = keycloakRule.startSession();
+        try {
+            Assert.assertTrue(userProvider.validCredentials(session, realm, user, UserCredentialModel.password(password)));
+        } finally {
+            keycloakRule.stopSession(session, true);
+        }
     }
 
     private void assertNotAuthenticated(UserProvider userProvider, RealmProvider realmProvider, String realmName, String username, String password) {
@@ -327,7 +338,12 @@ public class ExportImportTest {
             return;
         }
 
-        Assert.assertFalse(userProvider.validCredentials(realm, user, UserCredentialModel.password(password)));
+        KeycloakSession session = keycloakRule.startSession();
+        try {
+            Assert.assertFalse(userProvider.validCredentials(session, realm, user, UserCredentialModel.password(password)));
+        } finally {
+            keycloakRule.stopSession(session, true);
+        }
     }
 
     private static void addUser(UserProvider userProvider, RealmModel appRealm, String username, String password) {
@@ -365,19 +381,19 @@ public class ExportImportTest {
 
         private void pushProperty(String name, String value) {
             String currentValue = System.getProperty(name);
-            if (currentValue != null) {
-                previousValues.put(name, currentValue);
-            }
+            previousValues.put(name, currentValue);
             System.setProperty(name, value);
         }
 
         private void pullProperty(String name) {
-            String prevValue = previousValues.get(name);
+            if (previousValues.containsKey(name)) {
+                String prevValue = previousValues.get(name);
 
-            if (prevValue == null) {
-                System.getProperties().remove(name);
-            }  else {
-                System.setProperty(name, prevValue);
+                if (prevValue == null) {
+                    System.getProperties().remove(name);
+                } else {
+                    System.setProperty(name, prevValue);
+                }
             }
         }
 

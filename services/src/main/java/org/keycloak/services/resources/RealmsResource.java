@@ -1,41 +1,48 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.keycloak.services.resources;
 
-import org.jboss.logging.Logger;
-import org.jboss.resteasy.spi.BadRequestException;
-import org.jboss.resteasy.spi.NotFoundException;
+import org.jboss.resteasy.spi.HttpRequest;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
-import org.keycloak.ClientConnection;
-import org.keycloak.Config;
+import org.keycloak.common.ClientConnection;
+import org.keycloak.common.util.KeycloakUriBuilder;
 import org.keycloak.events.EventBuilder;
-import org.keycloak.models.ApplicationModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.protocol.LoginProtocol;
 import org.keycloak.protocol.LoginProtocolFactory;
-import org.keycloak.protocol.oidc.OpenIDConnect;
-import org.keycloak.protocol.oidc.OpenIDConnectService;
-import org.keycloak.services.managers.AuthenticationManager;
-import org.keycloak.services.managers.BruteForceProtector;
-import org.keycloak.services.managers.EventsManager;
+import org.keycloak.services.ServicesLogger;
+import org.keycloak.services.clientregistration.ClientRegistrationService;
 import org.keycloak.services.managers.RealmManager;
-import org.keycloak.util.StreamUtil;
+import org.keycloak.services.resource.RealmResourceProvider;
+import org.keycloak.services.util.CacheControlUtil;
+import org.keycloak.services.util.ResolveRelative;
+import org.keycloak.wellknown.WellKnownProvider;
 
 import javax.ws.rs.GET;
+import javax.ws.rs.NotFoundException;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.CacheControl;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriBuilder;
-import javax.ws.rs.core.UriInfo;
-import java.io.IOException;
-import java.io.InputStream;
+import javax.ws.rs.core.*;
+import javax.ws.rs.core.Response.ResponseBuilder;
+import java.net.URI;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -43,18 +50,7 @@ import java.io.InputStream;
  */
 @Path("/realms")
 public class RealmsResource {
-    protected static Logger logger = Logger.getLogger(RealmsResource.class);
-
-    @Context
-    protected UriInfo uriInfo;
-
-    @Context
-    protected HttpHeaders headers;
-
-    /*
-    @Context
-    protected ResourceContext resourceContext;
-    */
+    protected static ServicesLogger logger = ServicesLogger.ROOT_LOGGER;
 
     @Context
     protected KeycloakSession session;
@@ -63,134 +59,201 @@ public class RealmsResource {
     protected ClientConnection clientConnection;
 
     @Context
-    protected BruteForceProtector protector;
+    private HttpRequest request;
+
+    @Context
+    private UriInfo uriInfo;
 
     public static UriBuilder realmBaseUrl(UriInfo uriInfo) {
-        return uriInfo.getBaseUriBuilder().path(RealmsResource.class).path(RealmsResource.class, "getRealmResource");
+        UriBuilder baseUriBuilder = uriInfo.getBaseUriBuilder();
+        return realmBaseUrl(baseUriBuilder);
     }
 
-    public static UriBuilder realmBaseUrl(UriBuilder base) {
-        return base.path(RealmsResource.class).path(RealmsResource.class, "getRealmResource");
+    public static UriBuilder realmBaseUrl(UriBuilder baseUriBuilder) {
+        return baseUriBuilder.path(RealmsResource.class).path(RealmsResource.class, "getRealmResource");
     }
 
     public static UriBuilder accountUrl(UriBuilder base) {
         return base.path(RealmsResource.class).path(RealmsResource.class, "getAccountService");
     }
 
-    public static UriBuilder protocolUrl(UriBuilder base) {
-        return base.path(RealmsResource.class).path(RealmsResource.class, "getProtocol");
-    }
-
     public static UriBuilder protocolUrl(UriInfo uriInfo) {
         return uriInfo.getBaseUriBuilder().path(RealmsResource.class).path(RealmsResource.class, "getProtocol");
     }
 
-    @Path("{realm}/login-status-iframe.html")
-    @GET
-    @Produces(MediaType.TEXT_HTML)
-    @Deprecated
-    public Response getLoginStatusIframe(final @PathParam("realm") String name,
-                                       @QueryParam("client_id") String client_id,
-                                       @QueryParam("origin") String origin) {
-        // backward compatibility
-        RealmManager realmManager = new RealmManager(session);
-        RealmModel realm = locateRealm(name, realmManager);
-        EventBuilder event = new EventsManager(realm, session, clientConnection).createEventBuilder();
-        AuthenticationManager authManager = new AuthenticationManager(protector);
+    public static UriBuilder protocolUrl(UriBuilder builder) {
+        return builder.path(RealmsResource.class).path(RealmsResource.class, "getProtocol");
+    }
 
-        LoginProtocolFactory factory = (LoginProtocolFactory)session.getKeycloakSessionFactory().getProviderFactory(LoginProtocol.class, OpenIDConnect.LOGIN_PROTOCOL);
-        OpenIDConnectService endpoint = (OpenIDConnectService)factory.createProtocolEndpoint(realm, event, authManager);
+    public static UriBuilder clientRegistrationUrl(UriInfo uriInfo) {
+        return uriInfo.getBaseUriBuilder().path(RealmsResource.class).path(RealmsResource.class, "getClientsService");
+    }
 
-        ResteasyProviderFactory.getInstance().injectProperties(endpoint);
-        return endpoint.getLoginStatusIframe(client_id, origin);
-
+    public static UriBuilder brokerUrl(UriInfo uriInfo) {
+        return uriInfo.getBaseUriBuilder().path(RealmsResource.class).path(RealmsResource.class, "getBrokerService");
     }
 
     @Path("{realm}/protocol/{protocol}")
     public Object getProtocol(final @PathParam("realm") String name,
                                             final @PathParam("protocol") String protocol) {
-        RealmManager realmManager = new RealmManager(session);
-        RealmModel realm = locateRealm(name, realmManager);
-        EventBuilder event = new EventsManager(realm, session, clientConnection).createEventBuilder();
-        AuthenticationManager authManager = new AuthenticationManager(protector);
+        RealmModel realm = init(name);
+
+        EventBuilder event = new EventBuilder(realm, session, clientConnection);
 
         LoginProtocolFactory factory = (LoginProtocolFactory)session.getKeycloakSessionFactory().getProviderFactory(LoginProtocol.class, protocol);
-        Object endpoint = factory.createProtocolEndpoint(realm, event, authManager);
+        Object endpoint = factory.createProtocolEndpoint(realm, event);
 
         ResteasyProviderFactory.getInstance().injectProperties(endpoint);
-        //resourceContext.initResource(tokenService);
         return endpoint;
     }
 
-    @Path("{realm}/tokens")
-    @Deprecated
-    public Object getTokenService(final @PathParam("realm") String name) {
-        // for backward compatibility.
-        return getProtocol(name, "openid-connect");
+    /**
+     * Returns a temporary redirect to the client url configured for the given {@code clientId} in the given {@code realmName}.
+     * <p>
+     * This allows a client to refer to other clients just by their client id in URLs, will then redirect users to the actual client url.
+     * The client url is derived according to the rules of the base url in the client configuration.
+     * </p>
+     *
+     * @param realmName
+     * @param clientId
+     * @return
+     * @since 2.0
+     */
+    @GET
+    @Path("{realm}/clients/{client_id}/redirect")
+    public Response getRedirect(final @PathParam("realm") String realmName, final @PathParam("client_id") String clientId) {
+
+        RealmModel realm = init(realmName);
+
+        if (realm == null) {
+            return null;
+        }
+
+        ClientModel client = realm.getClientByClientId(clientId);
+
+        if (client == null) {
+            return null;
+        }
+
+        if (client.getRootUrl() == null && client.getBaseUrl() == null) {
+            return null;
+        }
+
+
+        URI targetUri;
+        if (client.getRootUrl() != null && (client.getBaseUrl() == null || client.getBaseUrl().isEmpty())) {
+            targetUri = KeycloakUriBuilder.fromUri(client.getRootUrl()).build();
+        } else {
+            targetUri = KeycloakUriBuilder.fromUri(ResolveRelative.resolveRelativeUri(uriInfo.getRequestUri(), client.getRootUrl(), client.getBaseUrl())).build();
+        }
+
+        return Response.temporaryRedirect(targetUri).build();
     }
 
     @Path("{realm}/login-actions")
     public LoginActionsService getLoginActionsService(final @PathParam("realm") String name) {
-        RealmManager realmManager = new RealmManager(session);
-        RealmModel realm = locateRealm(name, realmManager);
-        EventBuilder event = new EventsManager(realm, session, clientConnection).createEventBuilder();
-        AuthenticationManager authManager = new AuthenticationManager(protector);
-        LoginActionsService service = new LoginActionsService(realm, authManager, event);
+        RealmModel realm = init(name);
+        EventBuilder event = new EventBuilder(realm, session, clientConnection);
+        LoginActionsService service = new LoginActionsService(realm, event);
         ResteasyProviderFactory.getInstance().injectProperties(service);
+        return service;
+    }
 
-        //resourceContext.initResource(service);
+    @Path("{realm}/clients-registrations")
+    public ClientRegistrationService getClientsService(final @PathParam("realm") String name) {
+        RealmModel realm = init(name);
+        EventBuilder event = new EventBuilder(realm, session, clientConnection);
+        ClientRegistrationService service = new ClientRegistrationService(event);
+        ResteasyProviderFactory.getInstance().injectProperties(service);
         return service;
     }
 
     @Path("{realm}/clients-managements")
     public ClientsManagementService getClientsManagementService(final @PathParam("realm") String name) {
-        RealmManager realmManager = new RealmManager(session);
-        RealmModel realm = locateRealm(name, realmManager);
-        EventBuilder event = new EventsManager(realm, session, clientConnection).createEventBuilder();
+        RealmModel realm = init(name);
+        EventBuilder event = new EventBuilder(realm, session, clientConnection);
         ClientsManagementService service = new ClientsManagementService(realm, event);
         ResteasyProviderFactory.getInstance().injectProperties(service);
         return service;
     }
 
-
-    protected RealmModel locateRealm(String name, RealmManager realmManager) {
-        RealmModel realm = realmManager.getRealmByName(name);
+    private RealmModel init(String realmName) {
+        RealmManager realmManager = new RealmManager(session);
+        RealmModel realm = realmManager.getRealmByName(realmName);
         if (realm == null) {
-            throw new NotFoundException("Realm " + name + " does not exist");
+            throw new NotFoundException("Realm does not exist");
         }
+        session.getContext().setRealm(realm);
         return realm;
     }
 
     @Path("{realm}/account")
     public AccountService getAccountService(final @PathParam("realm") String name) {
-        RealmManager realmManager = new RealmManager(session);
-        RealmModel realm = locateRealm(name, realmManager);
+        RealmModel realm = init(name);
 
-        ApplicationModel application = realm.getApplicationNameMap().get(Constants.ACCOUNT_MANAGEMENT_APP);
-        if (application == null || !application.isEnabled()) {
+        ClientModel client = realm.getClientByClientId(Constants.ACCOUNT_MANAGEMENT_CLIENT_ID);
+        if (client == null || !client.isEnabled()) {
             logger.debug("account management not enabled");
             throw new NotFoundException("account management not enabled");
         }
 
-        EventBuilder event = new EventsManager(realm, session, clientConnection).createEventBuilder();
-        AccountService accountService = new AccountService(realm, application, event);
+        EventBuilder event = new EventBuilder(realm, session, clientConnection);
+        AccountService accountService = new AccountService(realm, client, event);
         ResteasyProviderFactory.getInstance().injectProperties(accountService);
-        //resourceContext.initResource(accountService);
         accountService.init();
         return accountService;
     }
 
     @Path("{realm}")
     public PublicRealmResource getRealmResource(final @PathParam("realm") String name) {
-        RealmManager realmManager = new RealmManager(session);
-        RealmModel realm = locateRealm(name, realmManager);
+        RealmModel realm = init(name);
         PublicRealmResource realmResource = new PublicRealmResource(realm);
         ResteasyProviderFactory.getInstance().injectProperties(realmResource);
-        //resourceContext.initResource(realmResource);
         return realmResource;
     }
 
+    @Path("{realm}/broker")
+    public IdentityBrokerService getBrokerService(final @PathParam("realm") String name) {
+        RealmModel realm = init(name);
 
+        IdentityBrokerService brokerService = new IdentityBrokerService(realm);
+        ResteasyProviderFactory.getInstance().injectProperties(brokerService);
 
+        brokerService.init();
 
+        return brokerService;
+    }
+
+    @GET
+    @Path("{realm}/.well-known/{provider}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response getWellKnown(final @PathParam("realm") String name,
+                              final @PathParam("provider") String providerName) {
+        init(name);
+
+        WellKnownProvider wellKnown = session.getProvider(WellKnownProvider.class, providerName);
+
+        ResponseBuilder responseBuilder = Response.ok(wellKnown.getConfig()).cacheControl(CacheControlUtil.getDefaultCacheControl());
+        return Cors.add(request, responseBuilder).allowedOrigins("*").build();
+    }
+
+    /**
+     * A JAX-RS sub-resource locator that uses the {@link org.keycloak.services.resource.RealmResourceSPI} to resolve sub-resources instances given an <code>unknownPath</code>.
+     *
+     * @param extension a path that could be to a REST extension
+     * @return a JAX-RS sub-resource instance for the REST extension if found. Otherwise null is returned.
+     */
+    @Path("{realm}/{extension}")
+    public Object resolveRealmExtension(@PathParam("realm") String realmName, @PathParam("extension") String extension) {
+        RealmResourceProvider provider = session.getProvider(RealmResourceProvider.class, extension);
+        if (provider != null) {
+            init(realmName);
+            Object resource = provider.getResource();
+            if (resource != null) {
+                return resource;
+            }
+        }
+
+        throw new NotFoundException();
+    }
 }

@@ -1,23 +1,18 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2012, Red Hat, Inc., and individual contributors
- * as indicated by the @author tags. See the copyright.txt file in the
- * distribution for a full listing of individual contributors.
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.keycloak.testsuite.pages;
 
@@ -33,8 +28,6 @@ import javax.ws.rs.core.UriBuilder;
  */
 public class AccountPasswordPage extends AbstractAccountPage {
 
-    public static String PATH = AccountService.passwordUrl(UriBuilder.fromUri(Constants.AUTH_SERVER_ROOT)).build("test").toString();
-
     @FindBy(id = "password")
     private WebElement passwordInput;
 
@@ -47,6 +40,8 @@ public class AccountPasswordPage extends AbstractAccountPage {
     @FindBy(className = "btn-primary")
     private WebElement submitButton;
 
+    private String realmName = "test";
+
     public void changePassword(String password, String newPassword, String passwordConfirm) {
         passwordInput.sendKeys(password);
         newPasswordInput.sendKeys(newPassword);
@@ -55,12 +50,26 @@ public class AccountPasswordPage extends AbstractAccountPage {
         submitButton.click();
     }
 
+    public void changePassword(String newPassword, String passwordConfirm) {
+        newPasswordInput.sendKeys(newPassword);
+        passwordConfirmInput.sendKeys(passwordConfirm);
+
+        submitButton.click();
+    }
+
     public boolean isCurrent() {
-        return driver.getTitle().contains("Account Management") && driver.getCurrentUrl().endsWith("/account/password");
+        return driver.getTitle().contains("Account Management") && driver.getCurrentUrl().split("\\?")[0].endsWith("/account/password");
     }
 
     public void open() {
-        driver.navigate().to(PATH);
+        driver.navigate().to(getPath());
     }
 
+    public void realm(String realmName) {
+        this.realmName = realmName;
+    }
+
+    public String getPath() {
+        return AccountService.passwordUrl(UriBuilder.fromUri(Constants.AUTH_SERVER_ROOT)).build(this.realmName).toString();
+    }
 }

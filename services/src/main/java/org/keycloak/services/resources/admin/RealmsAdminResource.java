@@ -1,13 +1,27 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.keycloak.services.resources.admin;
 
-import org.jboss.logging.Logger;
 import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.plugins.providers.multipart.InputPart;
-import org.jboss.resteasy.plugins.providers.multipart.MultipartFormDataInput;
 import org.jboss.resteasy.spi.NotFoundException;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
+import org.keycloak.common.ClientConnection;
 import org.keycloak.models.AdminRoles;
-import org.keycloak.models.ApplicationModel;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.RealmModel;
@@ -18,8 +32,8 @@ import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.services.ForbiddenException;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.services.resources.KeycloakApplication;
-import org.keycloak.services.resources.flows.Flows;
-import org.keycloak.util.JsonSerialization;
+import org.keycloak.services.ErrorResponse;
+import org.keycloak.services.ServicesLogger;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
@@ -33,11 +47,10 @@ import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
-import java.io.IOException;
+
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Top level resource for Admin REST API
@@ -46,9 +59,18 @@ import java.util.Map;
  * @version $Revision: 1 $
  */
 public class RealmsAdminResource {
-    protected static final Logger logger = Logger.getLogger(RealmsAdminResource.class);
+    protected static final ServicesLogger logger = ServicesLogger.ROOT_LOGGER;
     protected AdminAuth auth;
     protected TokenManager tokenManager;
+
+    @Context
+    protected KeycloakSession session;
+
+    @Context
+    protected KeycloakApplication keycloak;
+
+    @Context
+    protected ClientConnection clientConnection;
 
     public RealmsAdminResource(AdminAuth auth, TokenManager tokenManager) {
         this.auth = auth;
@@ -61,47 +83,40 @@ public class RealmsAdminResource {
         noCache.setNoCache(true);
     }
 
-    /*
-    @Context
-    protected ResourceContext resourceContext;
-    */
-
-    @Context
-    protected KeycloakSession session;
-
-    @Context
-    protected KeycloakApplication keycloak;
-
-
     /**
-     * Returns a list of realms.  This list is filtered based on what realms the caller is allowed to view.
+     * Get accessible realms
+     *
+     * Returns a list of accessible realms. The list is filtered based on what realms the caller is allowed to view.
      *
      * @return
      */
     @GET
     @NoCache
-    @Produces("application/json")
+    @Produces(MediaType.APPLICATION_JSON)
     public List<RealmRepresentation> getRealms() {
         RealmManager realmManager = new RealmManager(session);
         List<RealmRepresentation> reps = new ArrayList<RealmRepresentation>();
         if (auth.getRealm().equals(realmManager.getKeycloakAdminstrationRealm())) {
             List<RealmModel> realms = session.realms().getRealms();
             for (RealmModel realm : realms) {
-                addRealmRep(reps, realm, realm.getMasterAdminApp());
+                addRealmRep(reps, realm, realm.getMasterAdminClient());
             }
         } else {
-            ApplicationModel adminApp = auth.getRealm().getApplicationByName(realmManager.getRealmAdminApplicationName(auth.getRealm()));
+            ClientModel adminApp = auth.getRealm().getClientByClientId(realmManager.getRealmAdminClientId(auth.getRealm()));
             addRealmRep(reps, auth.getRealm(), adminApp);
         }
         logger.debug(("getRealms()"));
         return reps;
     }
 
+    protected void addRealmRep(List<RealmRepresentation> reps, RealmModel realm, ClientModel realmManagementClient) {
+        if (!auth.hasOneOfAppRole(realmManagementClient, AdminRoles.ALL_REALM_ROLES)) {
+            throw new ForbiddenException();
+        }
 
-    protected void addRealmRep(List<RealmRepresentation> reps, RealmModel realm, ApplicationModel realmManagementApplication) {
-        if (auth.hasAppRole(realmManagementApplication, AdminRoles.MANAGE_REALM)) {
+        if (auth.hasAppRole(realmManagementClient, AdminRoles.VIEW_REALM)) {
             reps.add(ModelToRepresentation.toRepresentation(realm, false));
-        } else if (auth.hasOneOfAppRole(realmManagementApplication, AdminRoles.ALL_REALM_ROLES)) {
+        } else if (auth.hasOneOfAppRole(realmManagementClient, AdminRoles.ALL_REALM_ROLES)) {
             RealmRepresentation rep = new RealmRepresentation();
             rep.setRealm(realm.getName());
             reps.add(rep);
@@ -109,14 +124,16 @@ public class RealmsAdminResource {
     }
 
     /**
-     * Import a realm from a full representation of that realm.  Realm name must be unique.
+     * Import a realm
+     *
+     * Imports a realm from a full representation of that realm.  Realm name must be unique.
      *
      * @param uriInfo
-     * @param rep JSON representation
+     * @param rep JSON representation of the realm
      * @return
      */
     @POST
-    @Consumes("application/json")
+    @Consumes(MediaType.APPLICATION_JSON)
     public Response importRealm(@Context final UriInfo uriInfo, final RealmRepresentation rep) {
         RealmManager realmManager = new RealmManager(session);
         realmManager.setContextPath(keycloak.getContextPath());
@@ -135,55 +152,11 @@ public class RealmsAdminResource {
 
             URI location = AdminRoot.realmsUrl(uriInfo).path(realm.getName()).build();
             logger.debugv("imported realm success, sending back: {0}", location.toString());
+
             return Response.created(location).build();
         } catch (ModelDuplicateException e) {
-            return Flows.errors().exists("Realm " + rep.getRealm() + " already exists");
+            return ErrorResponse.exists("Realm with same name exists");
         }
-    }
-
-    /**
-     * Upload a realm from a uploaded JSON file.  The posted represenation is expected to be a multipart/form-data encapsulation
-     * of a JSON file.  The same format a browser would use when uploading a file.
-     *
-     * @param uriInfo
-     * @param input multipart/form data
-     * @return
-     * @throws IOException
-     */
-    @POST
-    @Consumes(MediaType.MULTIPART_FORM_DATA)
-    public Response uploadRealm(@Context final UriInfo uriInfo, MultipartFormDataInput input) throws IOException {
-        RealmManager realmManager = new RealmManager(session);
-        realmManager.setContextPath(keycloak.getContextPath());
-        if (!auth.getRealm().equals(realmManager.getKeycloakAdminstrationRealm())) {
-            throw new ForbiddenException();
-        }
-        if (!auth.hasRealmRole(AdminRoles.CREATE_REALM)) {
-            throw new ForbiddenException();
-        }
-
-        Map<String, List<InputPart>> uploadForm = input.getFormDataMap();
-        List<InputPart> inputParts = uploadForm.get("file");
-
-        for (InputPart inputPart : inputParts) {
-            // inputPart.getBody doesn't work as content-type is wrong, and inputPart.setMediaType is not supported on AS7 (RestEasy 2.3.2.Final)
-            RealmRepresentation rep = JsonSerialization.readValue(inputPart.getBodyAsString(), RealmRepresentation.class);
-            RealmModel realm;
-            try {
-                realm = realmManager.importRealm(rep);
-            } catch (ModelDuplicateException e) {
-                return Flows.errors().exists("Realm " + rep.getRealm() + " already exists");
-            }
-
-            grantPermissionsToRealmCreator(realm);
-
-            if (inputParts.size() == 1) {
-                URI location = AdminRoot.realmsUrl(uriInfo).path(realm.getName()).build();
-                return Response.created(location).build();
-            }
-        }
-
-        return Response.noContent().build();
     }
 
     private void grantPermissionsToRealmCreator(RealmModel realm) {
@@ -192,7 +165,7 @@ public class RealmsAdminResource {
         }
 
         RealmModel adminRealm = new RealmManager(session).getKeycloakAdminstrationRealm();
-        ApplicationModel realmAdminApp = realm.getMasterAdminApp();
+        ClientModel realmAdminApp = realm.getMasterAdminClient();
         for (String r : AdminRoles.ALL_REALM_ROLES) {
             RoleModel role = realmAdminApp.getRole(r);
             auth.getUser().grantRole(role);
@@ -211,7 +184,7 @@ public class RealmsAdminResource {
                                             @PathParam("realm") final String name) {
         RealmManager realmManager = new RealmManager(session);
         RealmModel realm = realmManager.getRealmByName(name);
-        if (realm == null) throw new NotFoundException("{realm} = " + name);
+        if (realm == null) throw new NotFoundException("Realm not found.");
 
         if (!auth.getRealm().equals(realmManager.getKeycloakAdminstrationRealm())
                 && !auth.getRealm().equals(realm)) {
@@ -220,12 +193,15 @@ public class RealmsAdminResource {
         RealmAuth realmAuth;
 
         if (auth.getRealm().equals(realmManager.getKeycloakAdminstrationRealm())) {
-            realmAuth = new RealmAuth(auth, realm.getMasterAdminApp());
+            realmAuth = new RealmAuth(auth, realm.getMasterAdminClient());
         } else {
-            realmAuth = new RealmAuth(auth, realm.getApplicationByName(realmManager.getRealmAdminApplicationName(auth.getRealm())));
+            realmAuth = new RealmAuth(auth, realm.getClientByClientId(realmManager.getRealmAdminClientId(auth.getRealm())));
         }
 
-        RealmAdminResource adminResource = new RealmAdminResource(realmAuth, realm, tokenManager);
+        AdminEventBuilder adminEvent = new AdminEventBuilder(realm, auth, session, clientConnection);
+        session.getContext().setRealm(realm);
+
+        RealmAdminResource adminResource = new RealmAdminResource(realmAuth, realm, tokenManager, adminEvent);
         ResteasyProviderFactory.getInstance().injectProperties(adminResource);
         //resourceContext.initResource(adminResource);
         return adminResource;

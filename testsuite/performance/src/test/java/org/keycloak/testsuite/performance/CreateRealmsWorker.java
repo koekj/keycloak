@@ -1,13 +1,28 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.testsuite.performance;
 
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jorphan.logging.LoggingManager;
 import org.apache.log.Logger;
-import org.keycloak.models.ApplicationModel;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
-import org.keycloak.models.utils.RepresentationToModel;
-import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.services.managers.RealmManager;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,17 +85,10 @@ public class CreateRealmsWorker implements Worker {
 
         // Add applications
         for (int i=1 ; i<=appsPerRealm ; i++) {
-            ApplicationModel application = realm.addApplication(PerfTestUtils.getApplicationName(realmNumber, i));
+            ClientModel application = realm.addClient(PerfTestUtils.getApplicationName(realmNumber, i));
             for (int j=1 ; j<=rolesPerApp ; j++) {
                 application.addRole(PerfTestUtils.getApplicationRoleName(realmNumber, i, j));
             }
-        }
-
-        // Add required credentials
-        if (createRequiredCredentials) {
-            RepresentationToModel.addRequiredCredential(realm, CredentialRepresentation.PASSWORD);
-            RepresentationToModel.addRequiredCredential(realm, CredentialRepresentation.TOTP);
-            RepresentationToModel.addRequiredCredential(realm, CredentialRepresentation.CLIENT_CERT);
         }
 
         log.info("Finished creation of realm " + realmName);

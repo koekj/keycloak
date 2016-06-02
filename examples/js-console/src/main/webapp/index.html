@@ -1,3 +1,20 @@
+<!--
+  ~ Copyright 2016 Red Hat, Inc. and/or its affiliates
+  ~ and other contributors as indicated by the @author tags.
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~ http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
 <html>
 <head>
     <script src="/auth/js/keycloak.js"></script>
@@ -7,9 +24,11 @@
 <div>
     <button onclick="keycloak.login()">Login</button>
     <button onclick="keycloak.logout()">Logout</button>
+    <button onclick="keycloak.register()">Register</button>
     <button onclick="refreshToken(9999)">Refresh Token</button>
     <button onclick="refreshToken(30)">Refresh Token (if <30s validity)</button>
     <button onclick="loadProfile()">Get Profile</button>
+    <button onclick="loadUserInfo()">Get User Info</button>
     <button onclick="output(keycloak.tokenParsed)">Show Token</button>
     <button onclick="output(keycloak.refreshTokenParsed)">Show Refresh Token</button>
     <button onclick="output(keycloak.idTokenParsed)">Show ID Token</button>
@@ -17,13 +36,14 @@
     <button onclick="output(keycloak)">Show Details</button>
     <button onclick="output(keycloak.createLoginUrl())">Show Login URL</button>
     <button onclick="output(keycloak.createLogoutUrl())">Show Logout URL</button>
+    <button onclick="output(keycloak.createRegisterUrl())">Show Register URL</button>
 </div>
 
 <h2>Result</h2>
-<pre style="background-color: #ddd; border: 1px solid #ccc; padding: 10px;" id="output"></pre>
+<pre style="background-color: #ddd; border: 1px solid #ccc; padding: 10px; word-wrap: break-word; white-space: pre-wrap;" id="output"></pre>
 
 <h2>Events</h2>
-<pre style="background-color: #ddd; border: 1px solid #ccc; padding: 10px;" id="events"></pre>
+<pre style="background-color: #ddd; border: 1px solid #ccc; padding: 10px; word-wrap: break-word; white-space: pre-wrap;" id="events"></pre>
 
 
 <script>
@@ -35,12 +55,20 @@
         });
     }
 
+    function loadUserInfo() {
+        keycloak.loadUserInfo().success(function(userInfo) {
+            output(userInfo);
+        }).error(function() {
+            output('Failed to load user info');
+        });
+    }
+
     function refreshToken(minValidity) {
         keycloak.updateToken(minValidity).success(function(refreshed) {
             if (refreshed) {
                 output(keycloak.tokenParsed);
             } else {
-                output('Token not refreshed, valid for ' + Math.round(keycloak.tokenParsed.exp - new Date().getTime() / 1000) + ' seconds');
+                output('Token not refreshed, valid for ' + Math.round(keycloak.tokenParsed.exp + keycloak.timeSkew - new Date().getTime() / 1000) + ' seconds');
             }
         }).error(function() {
             output('Failed to refresh token');
@@ -53,11 +81,14 @@
             return;
         }
 
-        var o = 'Token Expires:\t\t' + new Date(keycloak.tokenParsed.exp * 1000).toLocaleString() + '\n';
-        o += 'Token Expires in:\t' + Math.round(keycloak.tokenParsed.exp - new Date().getTime() / 1000) + ' seconds\n';
+        var o = 'Token Expires:\t\t' + new Date((keycloak.tokenParsed.exp + keycloak.timeSkew) * 1000).toLocaleString() + '\n';
+        o += 'Token Expires in:\t' + Math.round(keycloak.tokenParsed.exp + keycloak.timeSkew - new Date().getTime() / 1000) + ' seconds\n';
 
-        o += 'Refresh Token Expires:\t' + new Date(keycloak.refreshTokenParsed.exp * 1000).toLocaleString() + '\n';
-        o += 'Refresh Expires in:\t' + Math.round(keycloak.refreshTokenParsed.exp - new Date().getTime() / 1000) + ' seconds';
+        if (keycloak.refreshTokenParsed) {
+            o += 'Refresh Token Expires:\t' + new Date((keycloak.refreshTokenParsed.exp + keycloak.timeSkew) * 1000).toLocaleString() + '\n';
+            o += 'Refresh Expires in:\t' + Math.round(keycloak.refreshTokenParsed.exp + keycloak.timeSkew - new Date().getTime() / 1000) + ' seconds';
+        }
+
         output(o);
     }
 
@@ -95,7 +126,17 @@
         event('Auth Logout');
     };
 
-    keycloak.init().success(function(authenticated) {
+    keycloak.onTokenExpired = function () {
+        event('Access token expired.');
+    };
+
+    // Flow can be changed to 'implicit' or 'hybrid', but then client must enable implicit flow in admin console too 
+    var initOptions = {
+        responseMode: 'fragment',
+        flow: 'standard'
+    };
+
+    keycloak.init(initOptions).success(function(authenticated) {
         output('Init Success (' + (authenticated ? 'Authenticated' : 'Not Authenticated') + ')');
     }).error(function() {
         output('Init Error');

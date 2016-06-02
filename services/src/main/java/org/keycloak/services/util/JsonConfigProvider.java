@@ -1,8 +1,25 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.services.util;
 
-import org.codehaus.jackson.JsonNode;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.keycloak.Config;
-import org.keycloak.util.StringPropertyReplacer;
+import org.keycloak.common.util.StringPropertyReplacer;
 
 import java.util.Properties;
 
@@ -23,7 +40,7 @@ public class JsonConfigProvider implements Config.ConfigProvider {
     @Override
     public String getProvider(String spi) {
         JsonNode n = getNode(config, spi, "provider");
-        return n != null ? replaceProperties(n.getTextValue()) : null;
+        return n != null ? replaceProperties(n.textValue()) : null;
     }
 
     @Override
@@ -71,7 +88,7 @@ public class JsonConfigProvider implements Config.ConfigProvider {
             if (n == null) {
                 return defaultValue;
             }
-            return replaceProperties(n.getTextValue());
+            return replaceProperties(n.textValue());
         }
 
         @Override
@@ -86,11 +103,11 @@ public class JsonConfigProvider implements Config.ConfigProvider {
             } else if (n.isArray()) {
                 String[] a = new String[n.size()];
                 for (int i = 0; i < a.length; i++) {
-                    a[i] = replaceProperties(n.get(i).getTextValue());
+                    a[i] = replaceProperties(n.get(i).textValue());
                 }
                 return a;
             } else {
-               return new String[] { replaceProperties(n.getTextValue()) };
+               return new String[] { replaceProperties(n.textValue()) };
             }
         }
 
@@ -109,9 +126,9 @@ public class JsonConfigProvider implements Config.ConfigProvider {
                 return defaultValue;
             }
             if (n.isTextual()) {
-                return Integer.parseInt(replaceProperties(n.getTextValue()));
+                return Integer.parseInt(replaceProperties(n.textValue()));
             } else {
-                return n.getIntValue();
+                return n.intValue();
             }
         }
 
@@ -130,9 +147,9 @@ public class JsonConfigProvider implements Config.ConfigProvider {
                 return defaultValue;
             }
             if (n.isTextual()) {
-                return Long.parseLong(replaceProperties(n.getTextValue()));
+                return Long.parseLong(replaceProperties(n.textValue()));
             } else {
-                return n.getLongValue();
+                return n.longValue();
             }
         }
 
@@ -151,9 +168,9 @@ public class JsonConfigProvider implements Config.ConfigProvider {
                 return defaultValue;
             }
             if (n.isTextual()) {
-                return Boolean.parseBoolean(replaceProperties(n.getTextValue()));
+                return Boolean.parseBoolean(replaceProperties(n.textValue()));
             } else {
-                return n.getBooleanValue();
+                return n.booleanValue();
             }
         }
 

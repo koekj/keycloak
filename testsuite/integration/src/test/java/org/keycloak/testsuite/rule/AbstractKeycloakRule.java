@@ -1,17 +1,36 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.testsuite.rule;
 
-import io.undertow.servlet.Servlets;
 import io.undertow.servlet.api.DeploymentInfo;
+import io.undertow.servlet.api.ErrorPage;
 import io.undertow.servlet.api.FilterInfo;
 import io.undertow.servlet.api.LoginConfig;
 import io.undertow.servlet.api.SecurityConstraint;
 import io.undertow.servlet.api.SecurityInfo;
 import io.undertow.servlet.api.ServletInfo;
 import io.undertow.servlet.api.WebResourceCollection;
-import org.jboss.resteasy.plugins.server.undertow.UndertowJaxrsServer;
 import org.jboss.resteasy.spi.ResteasyDeployment;
 import org.junit.rules.ExternalResource;
+import org.junit.rules.TemporaryFolder;
 import org.keycloak.Config;
+import org.keycloak.adapters.KeycloakConfigResolver;
+import org.keycloak.adapters.servlet.KeycloakOIDCFilter;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakTransaction;
 import org.keycloak.models.RealmModel;
@@ -19,24 +38,20 @@ import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.ModelToRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
-import org.keycloak.services.filters.ClientConnectionFilter;
-import org.keycloak.services.filters.KeycloakSessionServletFilter;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.testsuite.Retry;
-import org.keycloak.testutils.KeycloakServer;
+import org.keycloak.testsuite.KeycloakServer;
 import org.keycloak.util.JsonSerialization;
+import org.keycloak.common.util.Time;
 
 import javax.servlet.DispatcherType;
 import javax.servlet.Servlet;
 import javax.ws.rs.core.Application;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
 import java.util.Map;
-
-import org.keycloak.adapters.KeycloakConfigResolver;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -44,15 +59,28 @@ import org.keycloak.adapters.KeycloakConfigResolver;
  */
 public abstract class AbstractKeycloakRule extends ExternalResource {
 
+    protected TemporaryFolder temporaryFolder;
+
     protected KeycloakServer server;
 
     protected void before() throws Throwable {
+        temporaryFolder = new TemporaryFolder();
+        temporaryFolder.create();
+        System.setProperty("keycloak.tmp.dir", temporaryFolder.newFolder().getAbsolutePath());
+
         server = new KeycloakServer();
+
+        configureServer(server);
+
         server.start();
 
         removeTestRealms();
 
         setupKeycloak();
+    }
+
+    protected void configureServer(KeycloakServer server) {
+
     }
 
     public UserRepresentation getUser(String realm, String name) {
@@ -105,6 +133,7 @@ public abstract class AbstractKeycloakRule extends ExternalResource {
 
         try {
             RealmManager manager = new RealmManager(session);
+            manager.setContextPath("/auth");
 
             RealmModel adminstrationRealm = manager.getRealm(Config.getAdminRealm());
             RealmModel appRealm = manager.getRealm(realmId);
@@ -128,7 +157,7 @@ public abstract class AbstractKeycloakRule extends ExternalResource {
     }
 
 
-    private DeploymentInfo createDeploymentInfo(String name, String contextPath, Class<? extends Servlet> servletClass) {
+    public DeploymentInfo createDeploymentInfo(String name, String contextPath, Class<? extends Servlet> servletClass) {
         DeploymentInfo deploymentInfo = new DeploymentInfo();
         deploymentInfo.setClassLoader(getClass().getClassLoader());
         deploymentInfo.setDeploymentName(name);
@@ -141,43 +170,12 @@ public abstract class AbstractKeycloakRule extends ExternalResource {
         return deploymentInfo;
     }
 
-    public void deployApplication(String name, String contextPath, Class<? extends Servlet> servletClass, String adapterConfigPath, String role) {
-        deployApplication(name, contextPath, servletClass, adapterConfigPath, role, true);
 
+    public DeploymentBuilder createApplicationDeployment() {
+        return new DeploymentBuilder();
     }
 
-    public void deployApplication(String name, String contextPath, Class<? extends Servlet> servletClass, String adapterConfigPath, String role, boolean isConstrained) {
-        deployApplication(name, contextPath, servletClass, adapterConfigPath, role, isConstrained, null);
-    }
-
-    public void deployApplication(String name, String contextPath, Class<? extends Servlet> servletClass, String adapterConfigPath, String role, boolean isConstrained, Class<? extends KeycloakConfigResolver> keycloakConfigResolver) {
-        String constraintUrl = "/*";
-        deployApplication(name, contextPath, servletClass, adapterConfigPath, role, isConstrained, keycloakConfigResolver, constraintUrl);
-    }
-
-    public void deployApplication(String name, String contextPath, Class<? extends Servlet> servletClass, String adapterConfigPath, String role, boolean isConstrained, Class<? extends KeycloakConfigResolver> keycloakConfigResolver, String constraintUrl) {
-        DeploymentInfo di = createDeploymentInfo(name, contextPath, servletClass);
-        if (null == keycloakConfigResolver) {
-            di.addInitParameter("keycloak.config.file", adapterConfigPath);
-        } else {
-            di.addInitParameter("keycloak.config.resolver", keycloakConfigResolver.getCanonicalName());
-        }
-        if (isConstrained) {
-            SecurityConstraint constraint = new SecurityConstraint();
-            WebResourceCollection collection = new WebResourceCollection();
-            collection.addUrlPattern(constraintUrl);
-            constraint.addWebResourceCollection(collection);
-            constraint.addRoleAllowed(role);
-            di.addSecurityConstraint(constraint);
-        }
-        LoginConfig loginConfig = new LoginConfig("KEYCLOAK", "demo", null, "/error.html");
-        di.setLoginConfig(loginConfig);
-        addErrorPage(di);
-
-        server.getServer().deploy(di);
-    }
-
-    public void addErrorPage(DeploymentInfo di) {
+    public void addErrorPage(String errorPage, DeploymentInfo di) {
         ServletInfo servlet = new ServletInfo("Error Page", ErrorServlet.class);
         servlet.addMapping("/error.html");
         SecurityConstraint constraint = new SecurityConstraint();
@@ -187,6 +185,11 @@ public abstract class AbstractKeycloakRule extends ExternalResource {
         constraint.setEmptyRoleSemantic(SecurityInfo.EmptyRoleSemantic.PERMIT);
         di.addSecurityConstraint(constraint);
         di.addServlet(servlet);
+        di
+                .addErrorPage(new ErrorPage(errorPage, 400))
+                .addErrorPage(new ErrorPage(errorPage, 401))
+                .addErrorPage(new ErrorPage(errorPage, 403))
+                .addErrorPage(new ErrorPage(errorPage, 500));
     }
 
     public void deployJaxrsApplication(String name, String contextPath, Class<? extends Application> applicationClass, Map<String,String> initParams) {
@@ -209,6 +212,10 @@ public abstract class AbstractKeycloakRule extends ExternalResource {
     protected void after() {
         removeTestRealms();
         stopServer();
+        Time.setOffset(0);
+
+        temporaryFolder.delete();
+        System.getProperties().remove("keycloak.tmp.dir");
     }
 
     protected void removeTestRealms() {
@@ -282,6 +289,7 @@ public abstract class AbstractKeycloakRule extends ExternalResource {
                 }
 
             }, 10, 500);
+            Thread.sleep(100);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }
@@ -289,6 +297,103 @@ public abstract class AbstractKeycloakRule extends ExternalResource {
 
     protected String[] getTestRealms() {
         return new String[]{"test", "demo"};
+    }
+
+    public class DeploymentBuilder {
+
+        private String name;
+        private String contextPath;
+        private Class<? extends Servlet> servletClass;
+        private String adapterConfigPath;
+        private String role;
+        private boolean isConstrained = true;
+        private Class<? extends KeycloakConfigResolver> keycloakConfigResolver;
+        private String constraintUrl = "/*";
+        private String errorPage = "/error.html";
+
+        public DeploymentBuilder name(String name) {
+            this.name = name;
+            return this;
+        }
+
+        public DeploymentBuilder contextPath(String contextPath) {
+            this.contextPath = contextPath;
+            return this;
+        }
+
+        public DeploymentBuilder servletClass(Class<? extends Servlet> servletClass) {
+            this.servletClass = servletClass;
+            return this;
+        }
+
+        public DeploymentBuilder adapterConfigPath(String adapterConfigPath) {
+            this.adapterConfigPath = adapterConfigPath;
+            return this;
+        }
+
+        public DeploymentBuilder role(String role) {
+            this.role = role;
+            return this;
+        }
+
+        public DeploymentBuilder isConstrained(boolean isConstrained) {
+            this.isConstrained = isConstrained;
+            return this;
+        }
+
+        public DeploymentBuilder keycloakConfigResolver(Class<? extends KeycloakConfigResolver> keycloakConfigResolver) {
+            this.keycloakConfigResolver = keycloakConfigResolver;
+            return this;
+        }
+
+        public DeploymentBuilder constraintUrl(String constraintUrl) {
+            this.constraintUrl = constraintUrl;
+            return this;
+        }
+
+        public DeploymentBuilder errorPage(String errorPage) {
+            this.errorPage = errorPage;
+            return this;
+        }
+
+        public void deployApplication() {
+            DeploymentInfo di = createDeploymentInfo(name, contextPath, servletClass);
+            if (null == keycloakConfigResolver) {
+                di.addInitParameter("keycloak.config.file", adapterConfigPath);
+            } else {
+                di.addInitParameter("keycloak.config.resolver", keycloakConfigResolver.getCanonicalName());
+            }
+            if (isConstrained) {
+                SecurityConstraint constraint = new SecurityConstraint();
+                WebResourceCollection collection = new WebResourceCollection();
+                collection.addUrlPattern(constraintUrl);
+                constraint.addWebResourceCollection(collection);
+                constraint.addRoleAllowed(role);
+                di.addSecurityConstraint(constraint);
+            }
+            LoginConfig loginConfig = new LoginConfig("KEYCLOAK", "demo", null, null);
+            di.setLoginConfig(loginConfig);
+            addErrorPage(errorPage, di);
+
+            server.getServer().deploy(di);
+        }
+
+        public void deployApplicationWithFilter() {
+            DeploymentInfo di = createDeploymentInfo(name, contextPath, servletClass);
+            FilterInfo filter = new FilterInfo("keycloak-filter", KeycloakOIDCFilter.class);
+            if (null == keycloakConfigResolver) {
+                filter.addInitParam("keycloak.config.file", adapterConfigPath);
+            } else {
+                filter.addInitParam("keycloak.config.resolver", keycloakConfigResolver.getCanonicalName());
+            }
+            di.addFilter(filter);
+            di.addFilterUrlMapping("keycloak-filter", constraintUrl, DispatcherType.REQUEST);
+            server.getServer().deploy(di);
+
+
+
+        }
+
     }
 
 }

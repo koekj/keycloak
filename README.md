@@ -1,36 +1,74 @@
-keycloak
+Keycloak
 ========
 
-Please visit [http://keycloak.org](http://keycloak.org) for more information on Keycloak including how to download, documentation,
-and video tutorials.  
+Open Source Identity and Access Management for modern Applications and Services.
 
-Keycloak is an SSO Service for web apps and REST services.
-It can be used for social applications as well as enterprise applications.  It is based on OpenID Connect with support for SAML 2.0 as well.
-Here's some of the features:
+For more information about Keycloak visit [Keycloak homepage](http://keycloak.org) and [Keycloak blog](http://blog.keycloak.org).
 
-* SSO and Single Log Out for browser applications
-* Social Broker.  Enable Google, Facebook, Yahoo, Twitter social login with no code required.
-* Optional LDAP/Active Directory integration
-* Optional User Registration
-* Password and TOTP support (via Google Authenticator or FreeOTP).  Client cert auth coming soon.
-* User session management from both admin and user perspective
-* Customizable themes for user facing pages: login, grant pages, account management, emails, and admin console all customizable!
-* OAuth Bearer token auth for REST Services
-* Integrated Browser App to REST Service token propagation
-* Admin REST API
-* OAuth 2.0 Grant requests
-* CORS Support
-* CORS Web Origin management and validation
-* Completely centrally managed user and role mapping metadata.  Minimal configuration at the application side
-* Admin Console for managing users, roles, role mappings, applications, user sessions, allowed CORS web origins, and OAuth clients.
-* Deployable as a WAR, appliance, or an Openshift  cloud service (SaaS).
-* Supports JBoss AS7, EAP 6.x, Wildfly, Tomcat, and Jetty applications.   Plans to support Node.js, RAILS, GRAILS, and other non-Java applications.
-* Javascript/HTML 5 adapter for pure Javascript apps
-* Session management from admin console
-* Revocation policies
-* Password policies
-* OpenID Connect Support
-* SAML Support
 
-Please visit [http://keycloak.org](http://keycloak.org) for more information on Keycloak including how to download, documentation,
-and video tutorials.
+Building
+--------
+
+Ensure you have JDK 8 (or newer), Maven 3.2.1 (or newer) and Git installed
+
+    java -version
+    mvn -version
+    git --version
+    
+First clone the Keycloak repository:
+    
+    git clone https://github.com/keycloak/keycloak.git
+    cd keycloak
+    
+To build Keycloak run:
+
+    mvn install
+    
+This will build all modules and run the testsuite. 
+
+To build the distribution run:
+
+    mvn install -Pdistribution
+    
+Once completed you will find distribution archives in `distribution`.
+
+
+Starting Keycloak
+-----------------
+
+To start Keycloak during development first build as specficied above, then run:
+
+    mvn -f testsuite/integration/pom.xml exec:java -Pkeycloak-server 
+
+
+To start Keycloak from the appliance distribution first build the distribution it as specified above, then run:
+
+    tar xfz distribution/appliance-dist/target/keycloak-appliance-dist-all-<VERSION>.tar.gz
+    cd keycloak-appliance-dist-all-<VERSION>/keycloak
+    bin/standalone.sh
+    
+To stop the server press `Ctrl + C`.
+
+
+Help and Documentation
+----------------------
+* [Documentation](http://keycloak.jboss.org/docs) - User Guide, Admin REST API and Javadocs
+* [User Mailing List](https://lists.jboss.org/mailman/listinfo/keycloak-user) - Mailing list to ask for help and general questions about Keycloak
+* [JIRA](https://issues.jboss.org/projects/KEYCLOAK) - Issue tracker for bugs and feature requests
+
+
+Contributing
+------------
+
+* Developer documentation
+    * [Hacking on Keycloak](misc/HackingOnKeycloak.md) - How to become a Keycloak contributor
+    * [Testsuite](misc/Testsuite.md) - Details about testsuite, but also how to quickly run Keycloak during development and a few test tools (OTP generation, LDAP server, Mail server)
+    * [Database Testing](misc/DatabaseTesting.md) - How to do testing of Keycloak on different databases
+    * [Updating Database](misc/UpdatingDatabaseSchema.md) - How to change the Keycloak database
+* [Developer Mailing List](https://lists.jboss.org/mailman/listinfo/keycloak-dev) - Mailing list to discuss development of Keycloak
+
+
+License
+-------
+
+* [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0)

@@ -1,23 +1,18 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2012, Red Hat, Inc., and individual contributors
- * as indicated by the @author tags. See the copyright.txt file in the
- * distribution for a full listing of individual contributors.
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.keycloak.testsuite.pages;
 
@@ -56,17 +51,31 @@ public class LoginPage extends AbstractPage {
     @FindBy(linkText = "Register")
     private WebElement registerLink;
 
-    @FindBy(linkText = "Password")
+    @FindBy(linkText = "Forgot Password?")
     private WebElement resetPasswordLink;
 
     @FindBy(linkText = "Username")
     private WebElement recoverUsernameLink;
 
-    @FindBy(className = "feedback-error")
+    @FindBy(className = "alert-error")
     private WebElement loginErrorMessage;
 
-    @FindBy(className = "feedback-warning")
+    @FindBy(className = "alert-warning")
     private WebElement loginWarningMessage;
+
+    @FindBy(className = "alert-success")
+    private WebElement loginSuccessMessage;
+
+
+    @FindBy(className = "alert-info")
+    private WebElement loginInfoMessage;
+
+
+    @FindBy(id = "kc-current-locale-link")
+    private WebElement languageText;
+
+    @FindBy(id = "kc-locale-dropdown")
+    private WebElement localeDropdown;
 
     public void login(String username, String password) {
         usernameInput.clear();
@@ -85,8 +94,29 @@ public class LoginPage extends AbstractPage {
         submitButton.click();
     }
 
+    public void missingPassword(String username) {
+        usernameInput.clear();
+        usernameInput.sendKeys(username);
+        passwordInput.clear();
+        submitButton.click();
+
+    }
+    public void missingUsername() {
+        usernameInput.clear();
+        submitButton.click();
+
+    }
+
     public String getUsername() {
         return usernameInput.getAttribute("value");
+    }
+
+    public boolean isUsernameInputEnabled() {
+        return usernameInput.isEnabled();
+    }
+
+    public String getPassword() {
+        return passwordInput.getAttribute("value");
     }
 
     public void cancel() {
@@ -97,21 +127,30 @@ public class LoginPage extends AbstractPage {
         return loginErrorMessage != null ? loginErrorMessage.getText() : null;
     }
 
-    public String getWarning() {
-        return loginWarningMessage != null ? loginWarningMessage.getText() : null;
+    public String getSuccessMessage() {
+        return loginSuccessMessage != null ? loginSuccessMessage.getText() : null;
+    }
+    public String getInfoMessage() {
+        return loginInfoMessage != null ? loginInfoMessage.getText() : null;
     }
 
 
     public boolean isCurrent() {
-        return driver.getTitle().equals("Log in to test");
+        return driver.getTitle().equals("Log in to test") || driver.getTitle().equals("Anmeldung bei test");
     }
 
     public void clickRegister() {
         registerLink.click();
     }
 
-    public void clickSocial(String id) {
-        driver.findElement(By.className(id)).click();
+    public void clickSocial(String providerId) {
+        WebElement socialButton = findSocialButton(providerId);
+        socialButton.click();
+    }
+
+    public WebElement findSocialButton(String providerId) {
+        String id = "zocial-" + providerId;
+        return this.driver.findElement(By.id(id));
     }
 
     public void resetPassword() {
@@ -137,6 +176,14 @@ public class LoginPage extends AbstractPage {
     public void open() {
         oauth.openLoginForm();
         assertCurrent();
+    }
+
+    public String getLanguageDropdownText() {
+        return languageText.getText();
+    }
+
+    public void openLanguage(String language){
+        localeDropdown.findElement(By.linkText(language)).click();
     }
 
 }

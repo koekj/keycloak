@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.models.mongo.keycloak.entities;
 
 import com.mongodb.DBObject;
@@ -24,13 +41,13 @@ public class MongoRoleEntity extends RoleEntity implements MongoIdentifiableEnti
     // TODO This is required as Mongo doesn't support sparse indexes with compound keys (see https://jira.mongodb.org/browse/SERVER-2193)
     public String getNameIndex() {
         String realmId = getRealmId();
-        String applicationId = getApplicationId();
+        String clientId = getClientId();
         String name = getName();
 
         if (realmId != null) {
             return realmId + "//" + name;
         } else {
-            return applicationId + "//" + name;
+            return clientId + "//" + name;
         }
     }
 
@@ -41,46 +58,33 @@ public class MongoRoleEntity extends RoleEntity implements MongoIdentifiableEnti
     public void afterRemove(MongoStoreInvocationContext invContext) {
         MongoStore mongoStore = invContext.getMongoStore();
 
-        // Remove this role from all users, which has it
+        // Remove from groups
         DBObject query = new QueryBuilder()
                 .and("roleIds").is(getId())
                 .get();
 
-        List<MongoUserEntity> users = mongoStore.loadEntities(MongoUserEntity.class, query, invContext);
-        for (MongoUserEntity user : users) {
-            //logger.info("Removing role " + getName() + " from user " + user.getUsername());
-            mongoStore.pullItemFromList(user, "roleIds", getId(), invContext);
+        List<MongoGroupEntity> groups = mongoStore.loadEntities(MongoGroupEntity.class, query, invContext);
+        for (MongoGroupEntity group : groups) {
+            mongoStore.pullItemFromList(group, "roleIds", getId(), invContext);
         }
 
-        // Remove this scope from all users, which has it
+
+        // Remove this scope from all clients, which has it
         query = new QueryBuilder()
                 .and("scopeIds").is(getId())
                 .get();
 
-        users = mongoStore.loadEntities(MongoUserEntity.class, query, invContext);
-        for (MongoUserEntity user : users) {
+        List<MongoClientEntity> clients = mongoStore.loadEntities(MongoClientEntity.class, query, invContext);
+        for (MongoClientEntity client : clients) {
             //logger.info("Removing scope " + getName() + " from user " + user.getUsername());
-            mongoStore.pullItemFromList(user, "scopeIds", getId(), invContext);
+            mongoStore.pullItemFromList(client, "scopeIds", getId(), invContext);
         }
 
-        // Remove defaultRoles from realm
-        if (getRealmId() != null) {
-            MongoRealmEntity realmEntity = mongoStore.loadEntity(MongoRealmEntity.class, getRealmId(), invContext);
-
-            // Realm might be already removed at this point
-            if (realmEntity != null) {
-                mongoStore.pullItemFromList(realmEntity, "defaultRoles", getId(), invContext);
-            }
-        }
-
-        // Remove defaultRoles from application
-        if (getApplicationId() != null) {
-            MongoApplicationEntity appEntity = mongoStore.loadEntity(MongoApplicationEntity.class, getApplicationId(), invContext);
-
-            // Application might be already removed at this point
-            if (appEntity != null) {
-                mongoStore.pullItemFromList(appEntity, "defaultRoles", getId(), invContext);
-            }
+        // Remove this scope from all clientTemplates, which has it
+        List<MongoClientTemplateEntity> clientTemplates = mongoStore.loadEntities(MongoClientTemplateEntity.class, query, invContext);
+        for (MongoClientTemplateEntity clientTemplate : clientTemplates) {
+            //logger.info("Removing scope " + getName() + " from user " + user.getUsername());
+            mongoStore.pullItemFromList(clientTemplate, "scopeIds", getId(), invContext);
         }
 
         // Remove this role from others who has it as composite

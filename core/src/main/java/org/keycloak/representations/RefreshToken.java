@@ -1,4 +1,23 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.representations;
+
+import org.keycloak.util.TokenUtil;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -8,8 +27,9 @@ import java.util.Map;
  * @version $Revision: 1 $
  */
 public class RefreshToken extends AccessToken {
-    public RefreshToken() {
-        type("REFRESH");
+
+    private RefreshToken() {
+        type(TokenUtil.TOKEN_TYPE_REFRESH);
     }
 
     /**
@@ -20,10 +40,13 @@ public class RefreshToken extends AccessToken {
      */
     public RefreshToken(AccessToken token) {
         this();
+        this.clientSession = token.getClientSession();
         this.issuer = token.issuer;
         this.subject = token.subject;
         this.issuedFor = token.issuedFor;
         this.sessionState = token.sessionState;
+        this.nonce = token.nonce;
+        this.audience = token.audience;
         if (token.realmAccess != null) {
             realmAccess = token.realmAccess.clone();
         }

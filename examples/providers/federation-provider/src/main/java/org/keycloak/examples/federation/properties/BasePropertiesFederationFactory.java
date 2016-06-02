@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.examples.federation.properties;
 
 import org.keycloak.Config;
@@ -8,6 +25,7 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserFederationProvider;
 import org.keycloak.models.UserFederationProviderFactory;
 import org.keycloak.models.UserFederationProviderModel;
+import org.keycloak.models.UserFederationSyncResult;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserProvider;
 import org.keycloak.models.utils.KeycloakModelUtils;
@@ -88,12 +106,19 @@ public abstract class BasePropertiesFederationFactory implements UserFederationP
     }
 
     @Override
+    public void postInit(KeycloakSessionFactory factory) {
+
+    }
+
+    @Override
     public void close() {
 
     }
 
     @Override
-    public void syncAllUsers(KeycloakSessionFactory sessionFactory, final String realmId, final UserFederationProviderModel model) {
+    public UserFederationSyncResult syncAllUsers(KeycloakSessionFactory sessionFactory, final String realmId, final UserFederationProviderModel model) {
+        final UserFederationSyncResult syncResult = new UserFederationSyncResult();
+
         KeycloakModelUtils.runJobInTransaction(sessionFactory, new KeycloakSessionTask() {
 
             @Override
@@ -107,16 +132,21 @@ public abstract class BasePropertiesFederationFactory implements UserFederationP
 
                     if (localUser == null) {
                         // New user, let's import him
-                        federationProvider.getUserByUsername(realm, username);
+                        UserModel imported = federationProvider.getUserByUsername(realm, username);
+                        if (imported != null) {
+                            syncResult.increaseAdded();
+                        }
                     }
                 }
             }
 
         });
+
+        return syncResult;
     }
 
     @Override
-    public void syncChangedUsers(KeycloakSessionFactory sessionFactory, final String realmId, final UserFederationProviderModel model, Date lastSync) {
-        syncAllUsers(sessionFactory, realmId, model);
+    public UserFederationSyncResult syncChangedUsers(KeycloakSessionFactory sessionFactory, final String realmId, final UserFederationProviderModel model, Date lastSync) {
+        return syncAllUsers(sessionFactory, realmId, model);
     }
 }

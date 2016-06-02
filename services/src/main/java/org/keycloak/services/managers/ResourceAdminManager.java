@@ -1,13 +1,24 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.keycloak.services.managers;
 
-import org.apache.http.client.HttpClient;
-import org.jboss.logging.Logger;
-import org.jboss.resteasy.client.ClientRequest;
-import org.jboss.resteasy.client.ClientResponse;
-import org.jboss.resteasy.client.core.executors.ApacheHttpClient4Executor;
 import org.keycloak.TokenIdGenerator;
+import org.keycloak.connections.httpclient.HttpClientProvider;
 import org.keycloak.constants.AdapterConstants;
-import org.keycloak.models.ApplicationModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.ClientSessionModel;
 import org.keycloak.models.KeycloakSession;
@@ -19,15 +30,15 @@ import org.keycloak.representations.adapters.action.GlobalRequestResult;
 import org.keycloak.representations.adapters.action.LogoutAction;
 import org.keycloak.representations.adapters.action.PushNotBeforeAction;
 import org.keycloak.representations.adapters.action.TestAvailabilityAction;
-import org.keycloak.services.util.HttpClientBuilder;
+import org.keycloak.services.ServicesLogger;
 import org.keycloak.services.util.ResolveRelative;
-import org.keycloak.util.KeycloakUriBuilder;
-import org.keycloak.util.MultivaluedHashMap;
-import org.keycloak.util.StringPropertyReplacer;
-import org.keycloak.util.Time;
+import org.keycloak.common.util.KeycloakUriBuilder;
+import org.keycloak.common.util.MultivaluedHashMap;
+import org.keycloak.common.util.StringPropertyReplacer;
+import org.keycloak.common.util.Time;
 
-import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.UriBuilder;
+import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -42,24 +53,28 @@ import java.util.Set;
  * @version $Revision: 1 $
  */
 public class ResourceAdminManager {
-    protected static Logger logger = Logger.getLogger(ResourceAdminManager.class);
-    private static final String APPLICATION_SESSION_HOST_PROPERTY = "${application.session.host}";
+    protected static ServicesLogger logger = ServicesLogger.ROOT_LOGGER;
+    private static final String CLIENT_SESSION_HOST_PROPERTY = "${application.session.host}";
 
-    public static ApacheHttpClient4Executor createExecutor() {
-        HttpClient client = new HttpClientBuilder()
-                .disableTrustManager() // todo fix this, should have a trust manager or a good default
-                .build();
-        return new ApacheHttpClient4Executor(client);
+    private KeycloakSession session;
+
+    public ResourceAdminManager(KeycloakSession session) {
+        this.session = session;
     }
 
-    public static String getManagementUrl(URI requestUri, ApplicationModel application) {
-        String mgmtUrl = application.getManagementUrl();
+    public static String resolveUri(URI requestUri, String rootUrl, String uri) {
+        String absoluteURI = ResolveRelative.resolveRelativeUri(requestUri, rootUrl, uri);
+        return StringPropertyReplacer.replaceProperties(absoluteURI);
+
+   }
+
+    public static String getManagementUrl(URI requestUri, ClientModel client) {
+        String mgmtUrl = client.getManagementUrl();
         if (mgmtUrl == null || mgmtUrl.equals("")) {
             return null;
         }
 
-        // this is to support relative admin urls when keycloak and applications are deployed on the same machine
-        String absoluteURI = ResolveRelative.resolveRelativeUri(requestUri, mgmtUrl);
+        String absoluteURI = ResolveRelative.resolveRelativeUri(requestUri, client.getRootUrl(), mgmtUrl);
 
         // this is for resolving URI like "http://${jboss.host.name}:8080/..." in order to send request to same machine and avoid request to LB in cluster environment
         return StringPropertyReplacer.replaceProperties(absoluteURI);
@@ -67,13 +82,13 @@ public class ResourceAdminManager {
 
     // For non-cluster setup, return just single configured managementUrls
     // For cluster setup, return the management Urls corresponding to all registered cluster nodes
-    private List<String> getAllManagementUrls(URI requestUri, ApplicationModel application) {
-        String baseMgmtUrl = getManagementUrl(requestUri, application);
+    private List<String> getAllManagementUrls(URI requestUri, ClientModel client) {
+        String baseMgmtUrl = getManagementUrl(requestUri, client);
         if (baseMgmtUrl == null) {
             return Collections.emptyList();
         }
 
-        Set<String> registeredNodesHosts = new ApplicationManager().validateRegisteredNodes(application);
+        Set<String> registeredNodesHosts = new ClientManager().validateRegisteredNodes(client);
 
         // No-cluster setup
         if (registeredNodesHosts.isEmpty()) {
@@ -96,107 +111,77 @@ public class ResourceAdminManager {
     }
 
     protected void logoutUserSessions(URI requestUri, RealmModel realm, List<UserSessionModel> userSessions) {
-        ApacheHttpClient4Executor executor = createExecutor();
+        // Map from "app" to clientSessions for this app
+        MultivaluedHashMap<ClientModel, ClientSessionModel> clientSessions = new MultivaluedHashMap<ClientModel, ClientSessionModel>();
+        for (UserSessionModel userSession : userSessions) {
+            putClientSessions(clientSessions, userSession);
+        }
 
-        try {
-            // Map from "app" to clientSessions for this app
-            MultivaluedHashMap<ApplicationModel, ClientSessionModel> clientSessions = new MultivaluedHashMap<ApplicationModel, ClientSessionModel>();
+        logger.debugv("logging out {0} resources ", clientSessions.size());
+        //logger.infov("logging out resources: {0}", clientSessions);
+
+        for (Map.Entry<ClientModel, List<ClientSessionModel>> entry : clientSessions.entrySet()) {
+            logoutClientSessions(requestUri, realm, entry.getKey(), entry.getValue());
+        }
+    }
+
+    private void putClientSessions(MultivaluedHashMap<ClientModel, ClientSessionModel> clientSessions, UserSessionModel userSession) {
+        for (ClientSessionModel clientSession : userSession.getClientSessions()) {
+            ClientModel client = clientSession.getClient();
+            clientSessions.add(client, clientSession);
+        }
+    }
+
+    public void logoutUserFromClient(URI requestUri, RealmModel realm, ClientModel resource, UserModel user) {
+        List<UserSessionModel> userSessions = session.sessions().getUserSessions(realm, user);
+        List<ClientSessionModel> ourAppClientSessions = null;
+        if (userSessions != null) {
+            MultivaluedHashMap<ClientModel, ClientSessionModel> clientSessions = new MultivaluedHashMap<ClientModel, ClientSessionModel>();
             for (UserSessionModel userSession : userSessions) {
                 putClientSessions(clientSessions, userSession);
             }
-
-            logger.debugv("logging out {0} resources ", clientSessions.size());
-            //logger.infov("logging out resources: {0}", clientSessions);
-
-            for (Map.Entry<ApplicationModel, List<ClientSessionModel>> entry : clientSessions.entrySet()) {
-                logoutClientSessions(requestUri, realm, entry.getKey(), entry.getValue(), executor);
-            }
-        } finally {
-            executor.getHttpClient().getConnectionManager().shutdown();
-        }
-    }
-
-    private void putClientSessions(MultivaluedHashMap<ApplicationModel, ClientSessionModel> clientSessions, UserSessionModel userSession) {
-        for (ClientSessionModel clientSession : userSession.getClientSessions()) {
-            ClientModel client = clientSession.getClient();
-            if (client instanceof ApplicationModel) {
-                clientSessions.add((ApplicationModel)client, clientSession);
-            }
-        }
-    }
-
-    public void logoutSession(URI requestUri, RealmModel realm, UserSessionModel session) {
-        ApacheHttpClient4Executor executor = createExecutor();
-
-        try {
-            // Map from "app" to clientSessions for this app
-            MultivaluedHashMap<ApplicationModel, ClientSessionModel> clientSessions = new MultivaluedHashMap<ApplicationModel, ClientSessionModel>();
-            putClientSessions(clientSessions, session);
-
-            logger.debugv("logging out {0} resources ", clientSessions.size());
-            for (Map.Entry<ApplicationModel, List<ClientSessionModel>> entry : clientSessions.entrySet()) {
-                logoutClientSessions(requestUri, realm, entry.getKey(), entry.getValue(), executor);
-            }
-        } finally {
-            executor.getHttpClient().getConnectionManager().shutdown();
-        }
-    }
-
-    public void logoutUserFromApplication(URI requestUri, RealmModel realm, ApplicationModel resource, UserModel user, KeycloakSession session) {
-        ApacheHttpClient4Executor executor = createExecutor();
-
-        try {
-            List<UserSessionModel> userSessions = session.sessions().getUserSessions(realm, user);
-            List<ClientSessionModel> ourAppClientSessions = null;
-            if (userSessions != null) {
-                MultivaluedHashMap<ApplicationModel, ClientSessionModel> clientSessions = new MultivaluedHashMap<ApplicationModel, ClientSessionModel>();
-                for (UserSessionModel userSession : userSessions) {
-                    putClientSessions(clientSessions, userSession);
-                }
-                ourAppClientSessions = clientSessions.get(resource);
-            }
-
-            logoutClientSessions(requestUri, realm, resource, ourAppClientSessions, executor);
-        } finally {
-            executor.getHttpClient().getConnectionManager().shutdown();
+            ourAppClientSessions = clientSessions.get(resource);
         }
 
+        logoutClientSessions(requestUri, realm, resource, ourAppClientSessions);
     }
 
-    public boolean logoutClientSession(URI requestUri, RealmModel realm, ApplicationModel resource, ClientSessionModel clientSession, ApacheHttpClient4Executor client) {
-        return logoutClientSessions(requestUri, realm, resource, Arrays.asList(clientSession), client);
+    public boolean logoutClientSession(URI requestUri, RealmModel realm, ClientModel resource, ClientSessionModel clientSession) {
+        return logoutClientSessions(requestUri, realm, resource, Arrays.asList(clientSession));
     }
 
-    protected boolean logoutClientSessions(URI requestUri, RealmModel realm, ApplicationModel resource, List<ClientSessionModel> clientSessions, ApacheHttpClient4Executor client) {
+    protected boolean logoutClientSessions(URI requestUri, RealmModel realm, ClientModel resource, List<ClientSessionModel> clientSessions) {
         String managementUrl = getManagementUrl(requestUri, resource);
         if (managementUrl != null) {
 
             // Key is host, value is list of http sessions for this host
             MultivaluedHashMap<String, String> adapterSessionIds = null;
+            List<String> userSessions = new LinkedList<>();
             if (clientSessions != null && clientSessions.size() > 0) {
                 adapterSessionIds = new MultivaluedHashMap<String, String>();
                 for (ClientSessionModel clientSession : clientSessions) {
-                    String adapterSessionId = clientSession.getNote(AdapterConstants.APPLICATION_SESSION_STATE);
+                    String adapterSessionId = clientSession.getNote(AdapterConstants.CLIENT_SESSION_STATE);
                     if (adapterSessionId != null) {
-                        String host = clientSession.getNote(AdapterConstants.APPLICATION_SESSION_HOST);
+                        String host = clientSession.getNote(AdapterConstants.CLIENT_SESSION_HOST);
                         adapterSessionIds.add(host, adapterSessionId);
                     }
+                    if (clientSession.getUserSession() != null) userSessions.add(clientSession.getUserSession().getId());
                 }
             }
 
             if (adapterSessionIds == null || adapterSessionIds.isEmpty()) {
-                logger.debugv("Can't logout {0}: no logged adapter sessions", resource.getName());
+                logger.debugv("Can't logout {0}: no logged adapter sessions", resource.getClientId());
                 return false;
             }
 
-            if (managementUrl.contains(APPLICATION_SESSION_HOST_PROPERTY)) {
+            if (managementUrl.contains(CLIENT_SESSION_HOST_PROPERTY)) {
                 boolean allPassed = true;
                 // Send logout separately to each host (needed for single-sign-out in cluster for non-distributable apps - KEYCLOAK-748)
                 for (Map.Entry<String, List<String>> entry : adapterSessionIds.entrySet()) {
                     String host = entry.getKey();
                     List<String> sessionIds = entry.getValue();
-                    String currentHostMgmtUrl = managementUrl.replace(APPLICATION_SESSION_HOST_PROPERTY, host);
-                    allPassed = sendLogoutRequest(realm, resource, sessionIds, client, 0, currentHostMgmtUrl) && allPassed;
+                    String currentHostMgmtUrl = managementUrl.replace(CLIENT_SESSION_HOST_PROPERTY, host);
+                    allPassed = sendLogoutRequest(realm, resource, sessionIds, userSessions, 0, currentHostMgmtUrl) && allPassed;
                 }
 
                 return allPassed;
@@ -207,10 +192,10 @@ public class ResourceAdminManager {
                     allSessionIds.addAll(currentIds);
                 }
 
-                return sendLogoutRequest(realm, resource, allSessionIds, client, 0, managementUrl);
+                return sendLogoutRequest(realm, resource, allSessionIds, userSessions, 0, managementUrl);
             }
         } else {
-            logger.debugv("Can't logout {0}: no management url", resource.getName());
+            logger.debugv("Can't logout {0}: no management url", resource.getClientId());
             return false;
         }
     }
@@ -218,48 +203,37 @@ public class ResourceAdminManager {
     // Methods for logout all
 
     public GlobalRequestResult logoutAll(URI requestUri, RealmModel realm) {
-        ApacheHttpClient4Executor executor = createExecutor();
+        realm.setNotBefore(Time.currentTime());
+        List<ClientModel> resources = realm.getClients();
+        logger.debugv("logging out {0} resources ", resources.size());
 
-        try {
-            realm.setNotBefore(Time.currentTime());
-            List<ApplicationModel> resources = realm.getApplications();
-            logger.debugv("logging out {0} resources ", resources.size());
-
-            GlobalRequestResult finalResult = new GlobalRequestResult();
-            for (ApplicationModel resource : resources) {
-                GlobalRequestResult currentResult = logoutApplication(requestUri, realm, resource, executor, realm.getNotBefore());
-                finalResult.addAll(currentResult);
-            }
-            return finalResult;
-        } finally {
-            executor.getHttpClient().getConnectionManager().shutdown();
+        GlobalRequestResult finalResult = new GlobalRequestResult();
+        for (ClientModel resource : resources) {
+            GlobalRequestResult currentResult = logoutClient(requestUri, realm, resource, realm.getNotBefore());
+            finalResult.addAll(currentResult);
         }
+        return finalResult;
     }
 
-    public GlobalRequestResult logoutApplication(URI requestUri, RealmModel realm, ApplicationModel resource) {
-        ApacheHttpClient4Executor executor = createExecutor();
-        try {
-            resource.setNotBefore(Time.currentTime());
-            return logoutApplication(requestUri, realm, resource, executor, resource.getNotBefore());
-        } finally {
-            executor.getHttpClient().getConnectionManager().shutdown();
-        }
+    public GlobalRequestResult logoutClient(URI requestUri, RealmModel realm, ClientModel resource) {
+        resource.setNotBefore(Time.currentTime());
+        return logoutClient(requestUri, realm, resource, resource.getNotBefore());
     }
 
 
-    protected GlobalRequestResult logoutApplication(URI requestUri, RealmModel realm, ApplicationModel resource, ApacheHttpClient4Executor executor, int notBefore) {
+    protected GlobalRequestResult logoutClient(URI requestUri, RealmModel realm, ClientModel resource, int notBefore) {
         List<String> mgmtUrls = getAllManagementUrls(requestUri, resource);
         if (mgmtUrls.isEmpty()) {
-            logger.debug("No management URL or no registered cluster nodes for the application " + resource.getName());
+            logger.debug("No management URL or no registered cluster nodes for the client " + resource.getClientId());
             return new GlobalRequestResult();
         }
 
-        if (logger.isDebugEnabled()) logger.debug("Send logoutApplication for URLs: " + mgmtUrls);
+        if (logger.isDebugEnabled()) logger.debug("Send logoutClient for URLs: " + mgmtUrls);
 
         // Propagate this to all hosts
         GlobalRequestResult result = new GlobalRequestResult();
         for (String mgmtUrl : mgmtUrls) {
-            if (sendLogoutRequest(realm, resource, null, executor, notBefore, mgmtUrl)) {
+            if (sendLogoutRequest(realm, resource, null, null, notBefore, mgmtUrl)) {
                 result.addSuccessRequest(mgmtUrl);
             } else {
                 result.addFailedRequest(mgmtUrl);
@@ -268,66 +242,49 @@ public class ResourceAdminManager {
         return result;
     }
 
-    protected boolean sendLogoutRequest(RealmModel realm, ApplicationModel resource, List<String> adapterSessionIds, ApacheHttpClient4Executor client, int notBefore, String managementUrl) {
-        LogoutAction adminAction = new LogoutAction(TokenIdGenerator.generateId(), Time.currentTime() + 30, resource.getName(), adapterSessionIds, notBefore);
+    protected boolean sendLogoutRequest(RealmModel realm, ClientModel resource, List<String> adapterSessionIds, List<String> userSessions, int notBefore, String managementUrl) {
+        LogoutAction adminAction = new LogoutAction(TokenIdGenerator.generateId(), Time.currentTime() + 30, resource.getClientId(), adapterSessionIds, notBefore, userSessions);
         String token = new TokenManager().encodeToken(realm, adminAction);
-        if (logger.isDebugEnabled()) logger.debugv("logout resource {0} url: {1} sessionIds: " + adapterSessionIds, resource.getName(), managementUrl);
-        ClientRequest request = client.createRequest(UriBuilder.fromUri(managementUrl).path(AdapterConstants.K_LOGOUT).build().toString());
-        ClientResponse response;
+        if (logger.isDebugEnabled()) logger.debugv("logout resource {0} url: {1} sessionIds: " + adapterSessionIds, resource.getClientId(), managementUrl);
+        URI target = UriBuilder.fromUri(managementUrl).path(AdapterConstants.K_LOGOUT).build();
         try {
-            response = request.body(MediaType.TEXT_PLAIN_TYPE, token).post();
-        } catch (Exception e) {
-            logger.warn("Logout for application '" + resource.getName() + "' failed", e);
-            return false;
-        }
-        try {
-            boolean success = response.getStatus() == 204 || response.getStatus() == 200;
+            int status = session.getProvider(HttpClientProvider.class).postText(target.toString(), token);
+            boolean success = status == 204 || status == 200;
             logger.debugf("logout success for %s: %s", managementUrl, success);
             return success;
-        } finally {
-            response.releaseConnection();
+        } catch (IOException e) {
+            logger.logoutFailed(e, resource.getClientId());
+            return false;
         }
     }
 
     public GlobalRequestResult pushRealmRevocationPolicy(URI requestUri, RealmModel realm) {
-        ApacheHttpClient4Executor executor = createExecutor();
-
-        try {
-            GlobalRequestResult finalResult = new GlobalRequestResult();
-            for (ApplicationModel application : realm.getApplications()) {
-                GlobalRequestResult currentResult = pushRevocationPolicy(requestUri, realm, application, realm.getNotBefore(), executor);
-                finalResult.addAll(currentResult);
-            }
-            return finalResult;
-        } finally {
-            executor.getHttpClient().getConnectionManager().shutdown();
+        GlobalRequestResult finalResult = new GlobalRequestResult();
+        for (ClientModel client : realm.getClients()) {
+            GlobalRequestResult currentResult = pushRevocationPolicy(requestUri, realm, client, realm.getNotBefore());
+            finalResult.addAll(currentResult);
         }
+        return finalResult;
     }
 
-    public GlobalRequestResult pushApplicationRevocationPolicy(URI requestUri, RealmModel realm, ApplicationModel application) {
-        ApacheHttpClient4Executor executor = createExecutor();
-
-        try {
-            return pushRevocationPolicy(requestUri, realm, application, application.getNotBefore(), executor);
-        } finally {
-            executor.getHttpClient().getConnectionManager().shutdown();
-        }
+    public GlobalRequestResult pushClientRevocationPolicy(URI requestUri, RealmModel realm, ClientModel client) {
+        return pushRevocationPolicy(requestUri, realm, client, client.getNotBefore());
     }
 
 
-    protected GlobalRequestResult pushRevocationPolicy(URI requestUri, RealmModel realm, ApplicationModel resource, int notBefore, ApacheHttpClient4Executor executor) {
+    protected GlobalRequestResult pushRevocationPolicy(URI requestUri, RealmModel realm, ClientModel resource, int notBefore) {
         List<String> mgmtUrls = getAllManagementUrls(requestUri, resource);
         if (mgmtUrls.isEmpty()) {
-            logger.debugf("No management URL or no registered cluster nodes for the application %s", resource.getName());
+            logger.debugf("No management URL or no registered cluster nodes for the client %s", resource.getClientId());
             return new GlobalRequestResult();
         }
 
-        if (logger.isDebugEnabled()) logger.info("Sending push revocation to URLS: " + mgmtUrls);
+        if (logger.isDebugEnabled()) logger.debug("Sending push revocation to URLS: " + mgmtUrls);
 
         // Propagate this to all hosts
         GlobalRequestResult result = new GlobalRequestResult();
         for (String mgmtUrl : mgmtUrls) {
-            if (sendPushRevocationPolicyRequest(realm, resource, notBefore, executor, mgmtUrl)) {
+            if (sendPushRevocationPolicyRequest(realm, resource, notBefore, mgmtUrl)) {
                 result.addSuccessRequest(mgmtUrl);
             } else {
                 result.addFailedRequest(mgmtUrl);
@@ -336,73 +293,58 @@ public class ResourceAdminManager {
         return result;
     }
 
-    protected boolean sendPushRevocationPolicyRequest(RealmModel realm, ApplicationModel resource, int notBefore, ApacheHttpClient4Executor client, String managementUrl) {
-        PushNotBeforeAction adminAction = new PushNotBeforeAction(TokenIdGenerator.generateId(), Time.currentTime() + 30, resource.getName(), notBefore);
+    protected boolean sendPushRevocationPolicyRequest(RealmModel realm, ClientModel resource, int notBefore, String managementUrl) {
+        PushNotBeforeAction adminAction = new PushNotBeforeAction(TokenIdGenerator.generateId(), Time.currentTime() + 30, resource.getClientId(), notBefore);
         String token = new TokenManager().encodeToken(realm, adminAction);
-        logger.infov("pushRevocation resource: {0} url: {1}", resource.getName(), managementUrl);
-        ClientRequest request = client.createRequest(UriBuilder.fromUri(managementUrl).path(AdapterConstants.K_PUSH_NOT_BEFORE).build().toString());
-        ClientResponse response;
+        logger.debugv("pushRevocation resource: {0} url: {1}", resource.getClientId(), managementUrl);
+        URI target = UriBuilder.fromUri(managementUrl).path(AdapterConstants.K_PUSH_NOT_BEFORE).build();
         try {
-            response = request.body(MediaType.TEXT_PLAIN_TYPE, token).post();
-        } catch (Exception e) {
-            logger.warn("Failed to send revocation request", e);
-            return false;
-        }
-        try {
-            boolean success = response.getStatus() == 204 || response.getStatus() == 200;
+            int status = session.getProvider(HttpClientProvider.class).postText(target.toString(), token);
+            boolean success = status == 204 || status == 200;
             logger.debugf("pushRevocation success for %s: %s", managementUrl, success);
             return success;
-        } finally {
-            response.releaseConnection();
+        } catch (IOException e) {
+            logger.failedToSendRevocation(e);
+            return false;
         }
     }
 
-    public GlobalRequestResult testNodesAvailability(URI requestUri, RealmModel realm, ApplicationModel application) {
-        List<String> mgmtUrls = getAllManagementUrls(requestUri, application);
+    public GlobalRequestResult testNodesAvailability(URI requestUri, RealmModel realm, ClientModel client) {
+        List<String> mgmtUrls = getAllManagementUrls(requestUri, client);
         if (mgmtUrls.isEmpty()) {
-            logger.debug("No management URL or no registered cluster nodes for the application " + application.getName());
+            logger.debug("No management URL or no registered cluster nodes for the application " + client.getClientId());
             return new GlobalRequestResult();
         }
 
-        ApacheHttpClient4Executor executor = createExecutor();
 
-        try {
-            if (logger.isDebugEnabled()) logger.debug("Sending test nodes availability: " + mgmtUrls);
+        if (logger.isDebugEnabled()) logger.debug("Sending test nodes availability: " + mgmtUrls);
 
-            // Propagate this to all hosts
-            GlobalRequestResult result = new GlobalRequestResult();
-            for (String mgmtUrl : mgmtUrls) {
-                if (sendTestNodeAvailabilityRequest(realm, application, executor, mgmtUrl)) {
-                    result.addSuccessRequest(mgmtUrl);
-                } else {
-                    result.addFailedRequest(mgmtUrl);
-                }
+        // Propagate this to all hosts
+        GlobalRequestResult result = new GlobalRequestResult();
+        for (String mgmtUrl : mgmtUrls) {
+            if (sendTestNodeAvailabilityRequest(realm, client, mgmtUrl)) {
+                result.addSuccessRequest(mgmtUrl);
+            } else {
+                result.addFailedRequest(mgmtUrl);
             }
-            return result;
-        } finally {
-            executor.getHttpClient().getConnectionManager().shutdown();
         }
+        return result;
     }
 
-    protected boolean sendTestNodeAvailabilityRequest(RealmModel realm, ApplicationModel application, ApacheHttpClient4Executor client, String managementUrl) {
-        TestAvailabilityAction adminAction = new TestAvailabilityAction(TokenIdGenerator.generateId(), Time.currentTime() + 30, application.getName());
+    protected boolean sendTestNodeAvailabilityRequest(RealmModel realm, ClientModel client, String managementUrl) {
+        TestAvailabilityAction adminAction = new TestAvailabilityAction(TokenIdGenerator.generateId(), Time.currentTime() + 30, client.getClientId());
         String token = new TokenManager().encodeToken(realm, adminAction);
-        logger.debugv("testNodes availability resource: {0} url: {1}", application.getName(), managementUrl);
-        ClientRequest request = client.createRequest(UriBuilder.fromUri(managementUrl).path(AdapterConstants.K_TEST_AVAILABLE).build().toString());
-        ClientResponse response;
+        logger.debugv("testNodes availability resource: {0} url: {1}", client.getClientId(), managementUrl);
+        URI target = UriBuilder.fromUri(managementUrl).path(AdapterConstants.K_TEST_AVAILABLE).build();
         try {
-            response = request.body(MediaType.TEXT_PLAIN_TYPE, token).post();
-        } catch (Exception e) {
-            logger.warn("Availability test failed for uri '" + managementUrl + "'", e);
-            return false;
-        }
-        try {
-            boolean success = response.getStatus() == 204 || response.getStatus() == 200;
+            int status = session.getProvider(HttpClientProvider.class).postText(target.toString(), token);
+            boolean success = status == 204 || status == 200;
             logger.debugf("testAvailability success for %s: %s", managementUrl, success);
             return success;
-        } finally {
-            response.releaseConnection();
+        } catch (IOException e) {
+            logger.availabilityTestFailed(managementUrl);
+            return false;
         }
-    }
+   }
 
 }

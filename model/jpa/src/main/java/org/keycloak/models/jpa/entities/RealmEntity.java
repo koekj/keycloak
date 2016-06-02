@@ -1,5 +1,24 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.models.jpa.entities;
 
+import javax.persistence.Access;
+import javax.persistence.AccessType;
 import javax.persistence.CascadeType;
 import javax.persistence.CollectionTable;
 import javax.persistence.Column;
@@ -30,12 +49,13 @@ import java.util.Set;
 @Table(name="REALM")
 @Entity
 @NamedQueries({
-        @NamedQuery(name="getAllRealms", query="select realm from RealmEntity realm"),
-        @NamedQuery(name="getRealmByName", query="select realm from RealmEntity realm where realm.name = :name"),
+        @NamedQuery(name="getAllRealmIds", query="select realm.id from RealmEntity realm"),
+        @NamedQuery(name="getRealmIdByName", query="select realm.id from RealmEntity realm where realm.name = :name"),
 })
 public class RealmEntity {
     @Id
     @Column(name="ID", length = 36)
+    @Access(AccessType.PROPERTY) // we do this because relationships often fetch id, but not entity.  This avoids an extra SQL
     protected String id;
 
     @Column(name="NAME", unique = true)
@@ -47,35 +67,61 @@ public class RealmEntity {
     protected String sslRequired;
     @Column(name="REGISTRATION_ALLOWED")
     protected boolean registrationAllowed;
-    @Column(name="PASSWORD_CRED_GRANT_ALLOWED")
-    protected boolean passwordCredentialGrantAllowed;
+    @Column(name = "REG_EMAIL_AS_USERNAME")
+    protected boolean registrationEmailAsUsername;
     @Column(name="VERIFY_EMAIL")
     protected boolean verifyEmail;
     @Column(name="RESET_PASSWORD_ALLOWED")
     protected boolean resetPasswordAllowed;
     @Column(name="REMEMBER_ME")
     protected boolean rememberMe;
+
     @Column(name="PASSWORD_POLICY")
     protected String passwordPolicy;
 
+    @Column(name="OTP_POLICY_TYPE")
+    protected String otpPolicyType;
+    @Column(name="OTP_POLICY_ALG")
+    protected String otpPolicyAlgorithm;
+    @Column(name="OTP_POLICY_COUNTER")
+    protected int otpPolicyInitialCounter;
+    @Column(name="OTP_POLICY_DIGITS")
+    protected int otpPolicyDigits;
+    @Column(name="OTP_POLICY_WINDOW")
+    protected int otpPolicyLookAheadWindow;
+    @Column(name="OTP_POLICY_PERIOD")
+    protected int otpPolicyPeriod;
+
+
+    @Column(name="EDIT_USERNAME_ALLOWED")
+    protected boolean editUsernameAllowed;
+
+    @Column(name="REVOKE_REFRESH_TOKEN")
+    private boolean revokeRefreshToken;
     @Column(name="SSO_IDLE_TIMEOUT")
     private int ssoSessionIdleTimeout;
     @Column(name="SSO_MAX_LIFESPAN")
     private int ssoSessionMaxLifespan;
+    @Column(name="OFFLINE_SESSION_IDLE_TIMEOUT")
+    private int offlineSessionIdleTimeout;
     @Column(name="ACCESS_TOKEN_LIFESPAN")
     protected int accessTokenLifespan;
+    @Column(name="ACCESS_TOKEN_LIFE_IMPLICIT")
+    protected int accessTokenLifespanForImplicitFlow;
     @Column(name="ACCESS_CODE_LIFESPAN")
     protected int accessCodeLifespan;
     @Column(name="USER_ACTION_LIFESPAN")
     protected int accessCodeLifespanUserAction;
+    @Column(name="LOGIN_LIFESPAN")
+    protected int accessCodeLifespanLogin;
     @Column(name="NOT_BEFORE")
     protected int notBefore;
 
-    @Column(name="PUBLIC_KEY", length = 2048)
+    @Column(name="PUBLIC_KEY", length = 4000)
     protected String publicKeyPem;
-    @Column(name="PRIVATE_KEY", length = 2048)
+    @Column(name="PRIVATE_KEY", length = 4000)
     protected String privateKeyPem;
-    @Column(name="CERTIFICATE", length = 2048)
+    @Column(name="CERTIFICATE", length = 4000)
     protected String certificatePem;
     @Column(name="CODE_SECRET", length = 255)
     protected String codeSecret;
@@ -95,16 +141,14 @@ public class RealmEntity {
     @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
     Collection<RequiredCredentialEntity> requiredCredentials = new ArrayList<RequiredCredentialEntity>();
 
-    @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true)
-    @JoinTable(name="FED_PROVIDERS")
+    @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
     List<UserFederationProviderEntity> userFederationProviders = new ArrayList<UserFederationProviderEntity>();
 
-    @OneToMany(fetch = FetchType.LAZY, cascade ={CascadeType.REMOVE}, orphanRemoval = true)
-    @JoinTable(name="REALM_APPLICATION", joinColumns={ @JoinColumn(name="APPLICATION_ID") }, inverseJoinColumns={ @JoinColumn(name="REALM_ID") })
-    Collection<ApplicationEntity> applications = new ArrayList<ApplicationEntity>();
+    @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
+    Collection<UserFederationMapperEntity> userFederationMappers = new ArrayList<UserFederationMapperEntity>();
 
     @OneToMany(fetch = FetchType.LAZY, cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
-    Collection<RoleEntity> roles = new ArrayList<RoleEntity>();
+    Collection<ClientTemplateEntity> clientTemplates = new ArrayList<>();
 
     @ElementCollection
     @MapKeyColumn(name="NAME")
@@ -116,6 +160,10 @@ public class RealmEntity {
     @JoinTable(name="REALM_DEFAULT_ROLES", joinColumns = { @JoinColumn(name="REALM_ID")}, inverseJoinColumns = { @JoinColumn(name="ROLE_ID")})
     protected Collection<RoleEntity> defaultRoles = new ArrayList<RoleEntity>();
 
+    @OneToMany(fetch = FetchType.LAZY, cascade ={CascadeType.REMOVE}, orphanRemoval = true)
+    @JoinTable(name="REALM_DEFAULT_GROUPS", joinColumns = { @JoinColumn(name="REALM_ID")}, inverseJoinColumns = { @JoinColumn(name="GROUP_ID")})
+    protected Collection<GroupEntity> defaultGroups = new ArrayList<>();
+
     @Column(name="EVENTS_ENABLED")
     protected boolean eventsEnabled;
     @Column(name="EVENTS_EXPIRATION")
@@ -125,13 +173,65 @@ public class RealmEntity {
     @Column(name="VALUE")
     @CollectionTable(name="REALM_EVENTS_LISTENERS", joinColumns={ @JoinColumn(name="REALM_ID") })
     protected Set<String> eventsListeners = new HashSet<String>();
-
-    @OneToOne
-    @JoinColumn(name="MASTER_ADMIN_APP")
-    protected ApplicationEntity masterAdminApp;
+    
+    @ElementCollection
+    @Column(name="VALUE")
+    @CollectionTable(name="REALM_ENABLED_EVENT_TYPES", joinColumns={ @JoinColumn(name="REALM_ID") })
+    protected Set<String> enabledEventTypes = new HashSet<String>();
+    
+    @Column(name="ADMIN_EVENTS_ENABLED")
+    protected boolean adminEventsEnabled;
+    
+    @Column(name="ADMIN_EVENTS_DETAILS_ENABLED")
+    protected boolean adminEventsDetailsEnabled;
+    
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name="MASTER_ADMIN_CLIENT")
+    protected ClientEntity masterAdminClient;
 
     @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
     protected List<IdentityProviderEntity> identityProviders = new ArrayList<IdentityProviderEntity>();
+
+    @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
+    Collection<IdentityProviderMapperEntity> identityProviderMappers = new ArrayList<IdentityProviderMapperEntity>();
+
+    @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
+    Collection<AuthenticatorConfigEntity> authenticators = new ArrayList<>();
+
+    @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
+    Collection<RequiredActionProviderEntity> requiredActionProviders = new ArrayList<>();
+
+    @OneToMany(cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
+    Collection<AuthenticationFlowEntity> authenticationFlows = new ArrayList<>();
+
+    @Column(name="BROWSER_FLOW")
+    protected String browserFlow;
+
+    @Column(name="REGISTRATION_FLOW")
+    protected String registrationFlow;
+
+
+    @Column(name="DIRECT_GRANT_FLOW")
+    protected String directGrantFlow;
+    @Column(name="RESET_CREDENTIALS_FLOW")
+    protected String resetCredentialsFlow;
+
+    @Column(name="CLIENT_AUTH_FLOW")
+    protected String clientAuthenticationFlow;
+
+
+
+    @Column(name="INTERNATIONALIZATION_ENABLED")
+    protected boolean internationalizationEnabled;
+
+    @ElementCollection
+    @Column(name="VALUE")
+    @CollectionTable(name="REALM_SUPPORTED_LOCALES", joinColumns={ @JoinColumn(name="REALM_ID") })
+    protected Set<String> supportedLocales = new HashSet<String>();
+
+    @Column(name="DEFAULT_LOCALE")
+    protected String defaultLocale;
+
 
     public String getId() {
         return id;
@@ -165,20 +265,20 @@ public class RealmEntity {
         this.sslRequired = sslRequired;
     }
 
-    public boolean isPasswordCredentialGrantAllowed() {
-        return passwordCredentialGrantAllowed;
-    }
-
-    public void setPasswordCredentialGrantAllowed(boolean passwordCredentialGrantAllowed) {
-        this.passwordCredentialGrantAllowed = passwordCredentialGrantAllowed;
-    }
-
     public boolean isRegistrationAllowed() {
         return registrationAllowed;
     }
 
     public void setRegistrationAllowed(boolean registrationAllowed) {
         this.registrationAllowed = registrationAllowed;
+    }
+
+    public boolean isRegistrationEmailAsUsername() {
+        return registrationEmailAsUsername;
+    }
+
+    public void setRegistrationEmailAsUsername(boolean registrationEmailAsUsername) {
+        this.registrationEmailAsUsername = registrationEmailAsUsername;
     }
 
     public boolean isRememberMe() {
@@ -205,6 +305,22 @@ public class RealmEntity {
         this.resetPasswordAllowed = resetPasswordAllowed;
     }
 
+    public boolean isEditUsernameAllowed() {
+        return editUsernameAllowed;
+    }
+
+    public void setEditUsernameAllowed(boolean editUsernameAllowed) {
+        this.editUsernameAllowed = editUsernameAllowed;
+    }
+
+    public boolean isRevokeRefreshToken() {
+        return revokeRefreshToken;
+    }
+
+    public void setRevokeRefreshToken(boolean revokeRefreshToken) {
+        this.revokeRefreshToken = revokeRefreshToken;
+    }
+
     public int getSsoSessionIdleTimeout() {
         return ssoSessionIdleTimeout;
     }
@@ -221,12 +337,28 @@ public class RealmEntity {
         this.ssoSessionMaxLifespan = ssoSessionMaxLifespan;
     }
 
+    public int getOfflineSessionIdleTimeout() {
+        return offlineSessionIdleTimeout;
+    }
+
+    public void setOfflineSessionIdleTimeout(int offlineSessionIdleTimeout) {
+        this.offlineSessionIdleTimeout = offlineSessionIdleTimeout;
+    }
+
     public int getAccessTokenLifespan() {
         return accessTokenLifespan;
     }
 
     public void setAccessTokenLifespan(int accessTokenLifespan) {
         this.accessTokenLifespan = accessTokenLifespan;
+    }
+
+    public int getAccessTokenLifespanForImplicitFlow() {
+        return accessTokenLifespanForImplicitFlow;
+    }
+
+    public void setAccessTokenLifespanForImplicitFlow(int accessTokenLifespanForImplicitFlow) {
+        this.accessTokenLifespanForImplicitFlow = accessTokenLifespanForImplicitFlow;
     }
 
     public int getAccessCodeLifespan() {
@@ -243,6 +375,13 @@ public class RealmEntity {
 
     public void setAccessCodeLifespanUserAction(int accessCodeLifespanUserAction) {
         this.accessCodeLifespanUserAction = accessCodeLifespanUserAction;
+    }
+    public int getAccessCodeLifespanLogin() {
+        return accessCodeLifespanLogin;
+    }
+
+    public void setAccessCodeLifespanLogin(int accessCodeLifespanLogin) {
+        this.accessCodeLifespanLogin = accessCodeLifespanLogin;
     }
 
     public String getPublicKeyPem() {
@@ -276,30 +415,6 @@ public class RealmEntity {
     public void setRequiredCredentials(Collection<RequiredCredentialEntity> requiredCredentials) {
         this.requiredCredentials = requiredCredentials;
     }
-
-    public Collection<ApplicationEntity> getApplications() {
-        return applications;
-    }
-
-    public void setApplications(Collection<ApplicationEntity> applications) {
-        this.applications = applications;
-    }
-
-    public Collection<RoleEntity> getRoles() {
-        return roles;
-    }
-
-    public void setRoles(Collection<RoleEntity> roles) {
-        this.roles = roles;
-    }
-
-    public void addRole(RoleEntity role) {
-        if (roles == null) {
-            roles = new ArrayList<RoleEntity>();
-        }
-        roles.add(role);
-    }
-
     public Map<String, String> getSmtpConfig() {
         return smtpConfig;
     }
@@ -314,6 +429,14 @@ public class RealmEntity {
 
     public void setDefaultRoles(Collection<RoleEntity> defaultRoles) {
         this.defaultRoles = defaultRoles;
+    }
+
+    public Collection<GroupEntity> getDefaultGroups() {
+        return defaultGroups;
+    }
+
+    public void setDefaultGroups(Collection<GroupEntity> defaultGroups) {
+        this.defaultGroups = defaultGroups;
     }
 
     public String getPasswordPolicy() {
@@ -387,13 +510,37 @@ public class RealmEntity {
     public void setEventsListeners(Set<String> eventsListeners) {
         this.eventsListeners = eventsListeners;
     }
-
-    public ApplicationEntity getMasterAdminApp() {
-        return masterAdminApp;
+    
+    public Set<String> getEnabledEventTypes() {
+        return enabledEventTypes;
     }
 
-    public void setMasterAdminApp(ApplicationEntity masterAdminApp) {
-        this.masterAdminApp = masterAdminApp;
+    public void setEnabledEventTypes(Set<String> enabledEventTypes) {
+        this.enabledEventTypes = enabledEventTypes;
+    }
+    
+    public boolean isAdminEventsEnabled() {
+        return adminEventsEnabled;
+    }
+
+    public void setAdminEventsEnabled(boolean adminEventsEnabled) {
+        this.adminEventsEnabled = adminEventsEnabled;
+    }
+
+    public boolean isAdminEventsDetailsEnabled() {
+        return adminEventsDetailsEnabled;
+    }
+
+    public void setAdminEventsDetailsEnabled(boolean adminEventsDetailsEnabled) {
+        this.adminEventsDetailsEnabled = adminEventsDetailsEnabled;
+    }
+
+    public ClientEntity getMasterAdminClient() {
+        return masterAdminClient;
+    }
+
+    public void setMasterAdminClient(ClientEntity masterAdminClient) {
+        this.masterAdminClient = masterAdminClient;
     }
 
     public List<UserFederationProviderEntity> getUserFederationProviders() {
@@ -402,6 +549,14 @@ public class RealmEntity {
 
     public void setUserFederationProviders(List<UserFederationProviderEntity> userFederationProviders) {
         this.userFederationProviders = userFederationProviders;
+    }
+
+    public Collection<UserFederationMapperEntity> getUserFederationMappers() {
+        return userFederationMappers;
+    }
+
+    public void setUserFederationMappers(Collection<UserFederationMapperEntity> userFederationMappers) {
+        this.userFederationMappers = userFederationMappers;
     }
 
     public Collection<RealmAttributeEntity> getAttributes() {
@@ -432,5 +587,176 @@ public class RealmEntity {
         entity.setRealm(this);
         getIdentityProviders().add(entity);
     }
+
+    public boolean isInternationalizationEnabled() {
+        return internationalizationEnabled;
+    }
+
+    public void setInternationalizationEnabled(boolean internationalizationEnabled) {
+        this.internationalizationEnabled = internationalizationEnabled;
+    }
+
+    public Set<String> getSupportedLocales() {
+        return supportedLocales;
+    }
+
+    public void setSupportedLocales(Set<String> supportedLocales) {
+        this.supportedLocales = supportedLocales;
+    }
+
+    public String getDefaultLocale() {
+        return defaultLocale;
+    }
+
+    public void setDefaultLocale(String defaultLocale) {
+        this.defaultLocale = defaultLocale;
+    }
+
+    public Collection<IdentityProviderMapperEntity> getIdentityProviderMappers() {
+        return identityProviderMappers;
+    }
+
+    public void setIdentityProviderMappers(Collection<IdentityProviderMapperEntity> identityProviderMappers) {
+        this.identityProviderMappers = identityProviderMappers;
+    }
+
+    public Collection<AuthenticatorConfigEntity> getAuthenticatorConfigs() {
+        return authenticators;
+    }
+
+    public void setAuthenticatorConfigs(Collection<AuthenticatorConfigEntity> authenticators) {
+        this.authenticators = authenticators;
+    }
+
+    public Collection<RequiredActionProviderEntity> getRequiredActionProviders() {
+        return requiredActionProviders;
+    }
+
+    public void setRequiredActionProviders(Collection<RequiredActionProviderEntity> requiredActionProviders) {
+        this.requiredActionProviders = requiredActionProviders;
+    }
+
+    public Collection<AuthenticationFlowEntity> getAuthenticationFlows() {
+        return authenticationFlows;
+    }
+
+    public void setAuthenticationFlows(Collection<AuthenticationFlowEntity> authenticationFlows) {
+        this.authenticationFlows = authenticationFlows;
+    }
+
+    public String getOtpPolicyType() {
+        return otpPolicyType;
+    }
+
+    public void setOtpPolicyType(String otpPolicyType) {
+        this.otpPolicyType = otpPolicyType;
+    }
+
+    public String getOtpPolicyAlgorithm() {
+        return otpPolicyAlgorithm;
+    }
+
+    public void setOtpPolicyAlgorithm(String otpPolicyAlgorithm) {
+        this.otpPolicyAlgorithm = otpPolicyAlgorithm;
+    }
+
+    public int getOtpPolicyInitialCounter() {
+        return otpPolicyInitialCounter;
+    }
+
+    public void setOtpPolicyInitialCounter(int otpPolicyInitialCounter) {
+        this.otpPolicyInitialCounter = otpPolicyInitialCounter;
+    }
+
+    public int getOtpPolicyDigits() {
+        return otpPolicyDigits;
+    }
+
+    public void setOtpPolicyDigits(int otpPolicyDigits) {
+        this.otpPolicyDigits = otpPolicyDigits;
+    }
+
+    public int getOtpPolicyLookAheadWindow() {
+        return otpPolicyLookAheadWindow;
+    }
+
+    public void setOtpPolicyLookAheadWindow(int otpPolicyLookAheadWindow) {
+        this.otpPolicyLookAheadWindow = otpPolicyLookAheadWindow;
+    }
+
+    public int getOtpPolicyPeriod() {
+        return otpPolicyPeriod;
+    }
+
+    public void setOtpPolicyPeriod(int otpPolicyPeriod) {
+        this.otpPolicyPeriod = otpPolicyPeriod;
+    }
+
+    public String getBrowserFlow() {
+        return browserFlow;
+    }
+
+    public void setBrowserFlow(String browserFlow) {
+        this.browserFlow = browserFlow;
+    }
+
+    public String getRegistrationFlow() {
+        return registrationFlow;
+    }
+
+    public void setRegistrationFlow(String registrationFlow) {
+        this.registrationFlow = registrationFlow;
+    }
+
+    public String getDirectGrantFlow() {
+        return directGrantFlow;
+    }
+
+    public void setDirectGrantFlow(String directGrantFlow) {
+        this.directGrantFlow = directGrantFlow;
+    }
+
+    public String getResetCredentialsFlow() {
+        return resetCredentialsFlow;
+    }
+
+    public void setResetCredentialsFlow(String resetCredentialsFlow) {
+        this.resetCredentialsFlow = resetCredentialsFlow;
+    }
+
+    public String getClientAuthenticationFlow() {
+        return clientAuthenticationFlow;
+    }
+
+    public void setClientAuthenticationFlow(String clientAuthenticationFlow) {
+        this.clientAuthenticationFlow = clientAuthenticationFlow;
+    }
+
+    public Collection<ClientTemplateEntity> getClientTemplates() {
+        return clientTemplates;
+    }
+
+    public void setClientTemplates(Collection<ClientTemplateEntity> clientTemplates) {
+        this.clientTemplates = clientTemplates;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null) return false;
+        if (!(o instanceof RealmEntity)) return false;
+
+        RealmEntity that = (RealmEntity) o;
+
+        if (!id.equals(that.getId())) return false;
+
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        return id.hashCode();
+    }
+
 }
 

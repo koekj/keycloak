@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.testsuite;
 
 import org.hamcrest.CoreMatchers;
@@ -8,6 +25,9 @@ import org.junit.Assert;
 import org.junit.rules.TestRule;
 import org.junit.runners.model.Statement;
 import org.keycloak.Config;
+import org.keycloak.OAuth2Constants;
+import org.keycloak.authentication.authenticators.client.ClientIdAndSecretAuthenticator;
+import org.keycloak.events.admin.AdminEvent;
 import org.keycloak.events.Details;
 import org.keycloak.events.Event;
 import org.keycloak.events.EventListenerProvider;
@@ -15,6 +35,7 @@ import org.keycloak.events.EventListenerProviderFactory;
 import org.keycloak.events.EventType;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
@@ -22,6 +43,7 @@ import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.testsuite.rule.KeycloakRule;
+import org.keycloak.util.TokenUtil;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -111,16 +133,26 @@ public class AssertEvents implements TestRule, EventListenerProviderFactory {
     }
 
     public ExpectedEvent expectRequiredAction(EventType event) {
-        return expectLogin().event(event).session(isUUID());
+        return expectLogin().event(event).removeDetail(Details.CONSENT).session(isUUID());
     }
 
     public ExpectedEvent expectLogin() {
         return expect(EventType.LOGIN)
                 .detail(Details.CODE_ID, isCodeId())
-                .detail(Details.USERNAME, DEFAULT_USERNAME)
-                .detail(Details.RESPONSE_TYPE, "code")
-                .detail(Details.AUTH_METHOD, "form")
+                //.detail(Details.USERNAME, DEFAULT_USERNAME)
+                //.detail(Details.AUTH_METHOD, OIDCLoginProtocol.LOGIN_PROTOCOL)
+                //.detail(Details.AUTH_TYPE, AuthorizationEndpoint.CODE_AUTH_TYPE)
                 .detail(Details.REDIRECT_URI, DEFAULT_REDIRECT_URI)
+                .detail(Details.CONSENT, Details.CONSENT_VALUE_NO_CONSENT_REQUIRED)
+                .session(isUUID());
+    }
+
+    public ExpectedEvent expectClientLogin() {
+        return expect(EventType.CLIENT_LOGIN)
+                .detail(Details.CODE_ID, isCodeId())
+                .detail(Details.CLIENT_AUTH_METHOD, ClientIdAndSecretAuthenticator.PROVIDER_ID)
+                .detail(Details.GRANT_TYPE, OAuth2Constants.CLIENT_CREDENTIALS)
+                .removeDetail(Details.CODE_ID)
                 .session(isUUID());
     }
 
@@ -138,6 +170,8 @@ public class AssertEvents implements TestRule, EventListenerProviderFactory {
                 .detail(Details.CODE_ID, codeId)
                 .detail(Details.TOKEN_ID, isUUID())
                 .detail(Details.REFRESH_TOKEN_ID, isUUID())
+                .detail(Details.REFRESH_TOKEN_TYPE, TokenUtil.TOKEN_TYPE_REFRESH)
+                .detail(Details.CLIENT_AUTH_METHOD, ClientIdAndSecretAuthenticator.PROVIDER_ID)
                 .session(sessionId);
     }
 
@@ -145,7 +179,9 @@ public class AssertEvents implements TestRule, EventListenerProviderFactory {
         return expect(EventType.REFRESH_TOKEN)
                 .detail(Details.TOKEN_ID, isUUID())
                 .detail(Details.REFRESH_TOKEN_ID, refreshTokenId)
+                .detail(Details.REFRESH_TOKEN_TYPE, TokenUtil.TOKEN_TYPE_REFRESH)
                 .detail(Details.UPDATED_REFRESH_TOKEN_ID, isUUID())
+                .detail(Details.CLIENT_AUTH_METHOD, ClientIdAndSecretAuthenticator.PROVIDER_ID)
                 .session(sessionId);
     }
 
@@ -161,7 +197,6 @@ public class AssertEvents implements TestRule, EventListenerProviderFactory {
                 .user(user != null ? user.getId() : null)
                 .detail(Details.USERNAME, username)
                 .detail(Details.EMAIL, email)
-                .detail(Details.RESPONSE_TYPE, "code")
                 .detail(Details.REGISTER_METHOD, "form")
                 .detail(Details.REDIRECT_URI, DEFAULT_REDIRECT_URI);
     }
@@ -194,11 +229,22 @@ public class AssertEvents implements TestRule, EventListenerProviderFactory {
             @Override
             public void close() {
             }
+
+            @Override
+            public void onEvent(AdminEvent event, boolean includeRepresentation) {
+                // TODO Auto-generated method stub
+                
+            }
         };
     }
 
     @Override
     public void init(Config.Scope config) {
+    }
+
+    @Override
+    public void postInit(KeycloakSessionFactory factory) {
+
     }
 
     @Override
@@ -317,7 +363,7 @@ public class AssertEvents implements TestRule, EventListenerProviderFactory {
             Assert.assertThat(actual.getSessionId(), sessionId);
 
             if (details == null || details.isEmpty()) {
-                Assert.assertNull(actual.getDetails());
+//                Assert.assertNull(actual.getDetails());
             } else {
                 Assert.assertNotNull(actual.getDetails());
                 for (Map.Entry<String, Matcher<String>> d : details.entrySet()) {
@@ -328,12 +374,13 @@ public class AssertEvents implements TestRule, EventListenerProviderFactory {
 
                     Assert.assertThat("Unexpected value for " + d.getKey(), actualValue, d.getValue());
                 }
-
+                /*
                 for (String k : actual.getDetails().keySet()) {
                     if (!details.containsKey(k)) {
                         Assert.fail(k + " was not expected");
                     }
                 }
+                */
             }
 
             return actual;

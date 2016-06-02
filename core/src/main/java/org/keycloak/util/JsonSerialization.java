@@ -1,8 +1,29 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.util;
 
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.map.SerializationConfig;
-import org.codehaus.jackson.map.annotate.JsonSerialize;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,16 +41,22 @@ public class JsonSerialization {
     public static final ObjectMapper sysPropertiesAwareMapper = new ObjectMapper(new SystemPropertiesJsonParserFactory());
 
     static {
-        mapper.setSerializationInclusion(JsonSerialize.Inclusion.NON_NULL);
-        prettyMapper.enable(SerializationConfig.Feature.INDENT_OUTPUT);
-        prettyMapper.setSerializationInclusion(JsonSerialize.Inclusion.NON_NULL);
+        mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        prettyMapper.enable(SerializationFeature.INDENT_OUTPUT);
+        prettyMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }
 
     public static void writeValueToStream(OutputStream os, Object obj) throws IOException {
         mapper.writeValue(os, obj);
-
     }
 
+    public static void writeValuePrettyToStream(OutputStream os, Object obj) throws IOException {
+        prettyMapper.writeValue(os, obj);
+    }
+
+    public static String writeValueAsPrettyString(Object obj) throws IOException {
+        return prettyMapper.writeValueAsString(obj);
+    }
     public static String writeValueAsString(Object obj) throws IOException {
         return mapper.writeValueAsString(obj);
     }
@@ -50,6 +77,10 @@ public class JsonSerialization {
         return readValue(bytes, type, false);
     }
 
+    public static <T> T readValue(InputStream bytes, TypeReference<T> type) throws IOException {
+        return mapper.readValue(bytes, type);
+    }
+
     public static <T> T readValue(InputStream bytes, Class<T> type, boolean replaceSystemProperties) throws IOException {
         if (replaceSystemProperties) {
             return sysPropertiesAwareMapper.readValue(bytes, type);
@@ -58,6 +89,33 @@ public class JsonSerialization {
         }
     }
 
+    /**
+     * Creates an {@link ObjectNode} based on the given {@code pojo}, copying all its properties to the resulting {@link ObjectNode}.
+     *
+     * @param pojo a pojo which properties will be populates into the resulting a {@link ObjectNode}
+     * @return a {@link ObjectNode} with all the properties from the given pojo
+     * @throws IOException if the resulting a {@link ObjectNode} can not be created
+     */
+    public static ObjectNode createObjectNode(Object pojo) throws IOException {
+        if (pojo == null) {
+            throw new IllegalArgumentException("Pojo can not be null.");
+        }
 
+        ObjectNode objectNode = createObjectNode();
+        JsonParser jsonParser = mapper.getJsonFactory().createJsonParser(writeValueAsBytes(pojo));
+        JsonNode jsonNode = jsonParser.readValueAsTree();
+
+        if (!jsonNode.isObject()) {
+            throw new RuntimeException("JsonNode [" + jsonNode + "] is not a object.");
+        }
+
+        objectNode.putAll((ObjectNode) jsonNode);
+
+        return objectNode;
+    }
+
+    public static ObjectNode createObjectNode() {
+        return mapper.createObjectNode();
+    }
 
 }

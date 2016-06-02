@@ -1,47 +1,44 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2012, Red Hat, Inc., and individual contributors
- * as indicated by the @author tags. See the copyright.txt file in the
- * distribution for a full listing of individual contributors.
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.keycloak.testsuite;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
-import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.utils.URLEncodedUtils;
+import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
 import org.json.JSONObject;
 import org.junit.Assert;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.RSATokenVerifier;
-import org.keycloak.VerificationException;
+import org.keycloak.common.VerificationException;
+import org.keycloak.constants.AdapterConstants;
 import org.keycloak.jose.jws.JWSInput;
 import org.keycloak.jose.jws.crypto.RSAProvider;
-import org.keycloak.protocol.oidc.OpenIDConnectService;
+import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.RefreshToken;
 import org.keycloak.util.BasicAuthHelper;
-import org.keycloak.util.PemUtils;
+import org.keycloak.common.util.PemUtils;
 import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
 
@@ -67,17 +64,21 @@ public class OAuthClient {
 
     private String realm = "test";
 
-    private String responseType = OAuth2Constants.CODE;
-
-    private String grantType = "authorization_code";
-
     private String clientId = "test-app";
 
     private String redirectUri = "http://localhost:8081/app/auth";
 
     private String state = "mystate";
 
+    private String scope;
+
+    private String uiLocales = null;
+
     private PublicKey realmPublicKey;
+
+    private String clientSessionState;
+
+    private String clientSessionHost;
 
     public OAuthClient(WebDriver driver) {
         this.driver = driver;
@@ -92,7 +93,7 @@ public class OAuthClient {
 
     public AuthorizationCodeResponse doLogin(String username, String password) {
         openLoginForm();
-
+        String src = driver.getPageSource();
         driver.findElement(By.id("username")).sendKeys(username);
         driver.findElement(By.id("password")).sendKeys(password);
         driver.findElement(By.name("login")).click();
@@ -109,128 +110,265 @@ public class OAuthClient {
     }
 
     public AccessTokenResponse doAccessTokenRequest(String code, String password) {
-        HttpClient client = new DefaultHttpClient();
-        HttpPost post = new HttpPost(getAccessTokenUrl());
+        CloseableHttpClient client = new DefaultHttpClient();
+        try {
+            HttpPost post = new HttpPost(getAccessTokenUrl());
 
-        List<NameValuePair> parameters = new LinkedList<NameValuePair>();
-        if (grantType != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.GRANT_TYPE, grantType));
+            List<NameValuePair> parameters = new LinkedList<NameValuePair>();
+            parameters.add(new BasicNameValuePair(OAuth2Constants.GRANT_TYPE, OAuth2Constants.AUTHORIZATION_CODE));
+
+            if (code != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.CODE, code));
+            }
+            if (redirectUri != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.REDIRECT_URI, redirectUri));
+            }
+            if (clientId != null && password != null) {
+                String authorization = BasicAuthHelper.createHeader(clientId, password);
+                post.setHeader("Authorization", authorization);
+            } else if (clientId != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, clientId));
+            }
+
+            if (clientSessionState != null) {
+                parameters.add(new BasicNameValuePair(AdapterConstants.CLIENT_SESSION_STATE, clientSessionState));
+            }
+
+            if (clientSessionHost != null) {
+                parameters.add(new BasicNameValuePair(AdapterConstants.CLIENT_SESSION_HOST, clientSessionHost));
+            }
+
+            UrlEncodedFormEntity formEntity = null;
+            try {
+                formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                throw new RuntimeException(e);
+            }
+            post.setEntity(formEntity);
+
+            try {
+                return new AccessTokenResponse(client.execute(post));
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to retrieve access token", e);
+            }
+        } finally {
+            closeClient(client);
         }
-        if (code != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.CODE, code));
-        }
-        if (redirectUri != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.REDIRECT_URI, redirectUri));
-        }
-        if (clientId != null && password != null) {
-            String authorization = BasicAuthHelper.createHeader(clientId, password);
+    }
+
+    public String introspectAccessTokenWithClientCredential(String clientId, String clientSecret, String tokenToIntrospect) {
+        return introspectTokenWithClientCredential(clientId, clientSecret, "access_token", tokenToIntrospect);
+    }
+
+    public String introspectRefreshTokenWithClientCredential(String clientId, String clientSecret, String tokenToIntrospect) {
+        return introspectTokenWithClientCredential(clientId, clientSecret, "refresh_token", tokenToIntrospect);
+    }
+
+    public String introspectTokenWithClientCredential(String clientId, String clientSecret, String tokenType, String tokenToIntrospect) {
+        CloseableHttpClient client = new DefaultHttpClient();
+        try {
+            HttpPost post = new HttpPost(getTokenIntrospectionUrl());
+
+            String authorization = BasicAuthHelper.createHeader(clientId, clientSecret);
             post.setHeader("Authorization", authorization);
-        }
-        else if (clientId != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, clientId));
-        }
 
-        UrlEncodedFormEntity formEntity = null;
-        try {
-            formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
-        post.setEntity(formEntity);
+            List<NameValuePair> parameters = new LinkedList<>();
 
-        try {
-            return new AccessTokenResponse(client.execute(post));
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to retrieve access token", e);
+            parameters.add(new BasicNameValuePair("token", tokenToIntrospect));
+            parameters.add(new BasicNameValuePair("token_type_hint", tokenType));
+
+            UrlEncodedFormEntity formEntity;
+
+            try {
+                formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                throw new RuntimeException(e);
+            }
+
+            post.setEntity(formEntity);
+
+            try {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+                client.execute(post).getEntity().writeTo(out);
+
+                return new String(out.toByteArray());
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to retrieve access token", e);
+            }
+        } finally {
+            closeClient(client);
         }
     }
 
     public AccessTokenResponse doGrantAccessTokenRequest(String clientSecret, String username,  String password) throws Exception {
-        HttpClient client = new DefaultHttpClient();
-        HttpPost post = new HttpPost(getResourceOwnerPasswordCredentialGrantUrl());
-
-        String authorization = BasicAuthHelper.createHeader(clientId, clientSecret);
-        post.setHeader("Authorization", authorization);
-
-        List<NameValuePair> parameters = new LinkedList<NameValuePair>();
-        parameters.add(new BasicNameValuePair("username", username));
-        parameters.add(new BasicNameValuePair("password", password));
-
-        UrlEncodedFormEntity formEntity;
-        try {
-            formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
-        post.setEntity(formEntity);
-
-        return new AccessTokenResponse(client.execute(post));
+        return doGrantAccessTokenRequest(realm, username, password, null, clientId, clientSecret);
     }
 
-    public HttpResponse doLogout(String refreshToken, String clientSecret) throws IOException {
-        HttpClient client = new DefaultHttpClient();
-        HttpPost post = new HttpPost(getLogoutUrl(null, null));
+    public AccessTokenResponse doGrantAccessTokenRequest(String clientSecret, String username,  String password, String otp) throws Exception {
+        return doGrantAccessTokenRequest(realm, username, password, otp, clientId, clientSecret);
+    }
 
-        List<NameValuePair> parameters = new LinkedList<NameValuePair>();
-        if (refreshToken != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.REFRESH_TOKEN, refreshToken));
+    public AccessTokenResponse doGrantAccessTokenRequest(String realm, String username, String password, String totp,
+                                                         String clientId, String clientSecret) throws Exception {
+        CloseableHttpClient client = new DefaultHttpClient();
+        try {
+            HttpPost post = new HttpPost(getResourceOwnerPasswordCredentialGrantUrl(realm));
+
+            List<NameValuePair> parameters = new LinkedList<NameValuePair>();
+            parameters.add(new BasicNameValuePair(OAuth2Constants.GRANT_TYPE, OAuth2Constants.PASSWORD));
+            parameters.add(new BasicNameValuePair("username", username));
+            parameters.add(new BasicNameValuePair("password", password));
+            if (totp != null) {
+                parameters.add(new BasicNameValuePair("totp", totp));
+
+            }
+            if (clientSecret != null) {
+                String authorization = BasicAuthHelper.createHeader(clientId, clientSecret);
+                post.setHeader("Authorization", authorization);
+            } else {
+                parameters.add(new BasicNameValuePair("client_id", clientId));
+
+            }
+
+            if (clientSessionState != null) {
+                parameters.add(new BasicNameValuePair(AdapterConstants.CLIENT_SESSION_STATE, clientSessionState));
+            }
+            if (clientSessionHost != null) {
+                parameters.add(new BasicNameValuePair(AdapterConstants.CLIENT_SESSION_HOST, clientSessionHost));
+            }
+            if (scope != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.SCOPE, scope));
+            }
+
+            UrlEncodedFormEntity formEntity;
+            try {
+                formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                throw new RuntimeException(e);
+            }
+            post.setEntity(formEntity);
+
+            return new AccessTokenResponse(client.execute(post));
+        } finally {
+            closeClient(client);
         }
-        if (clientId != null && clientSecret != null) {
+    }
+
+    public AccessTokenResponse doClientCredentialsGrantAccessTokenRequest(String clientSecret) throws Exception {
+        CloseableHttpClient client = new DefaultHttpClient();
+        try {
+            HttpPost post = new HttpPost(getServiceAccountUrl());
+
             String authorization = BasicAuthHelper.createHeader(clientId, clientSecret);
             post.setHeader("Authorization", authorization);
-        }
-        else if (clientId != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, clientId));
-        }
 
-        UrlEncodedFormEntity formEntity;
+            List<NameValuePair> parameters = new LinkedList<NameValuePair>();
+            parameters.add(new BasicNameValuePair(OAuth2Constants.GRANT_TYPE, OAuth2Constants.CLIENT_CREDENTIALS));
+
+            if (scope != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.SCOPE, scope));
+            }
+
+            UrlEncodedFormEntity formEntity;
+            try {
+                formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                throw new RuntimeException(e);
+            }
+            post.setEntity(formEntity);
+
+            return new AccessTokenResponse(client.execute(post));
+        } finally {
+            closeClient(client);
+        }
+    }
+
+
+    public HttpResponse doLogout(String refreshToken, String clientSecret) throws IOException {
+        CloseableHttpClient client = new DefaultHttpClient();
         try {
-            formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
-        post.setEntity(formEntity);
+            HttpPost post = new HttpPost(getLogoutUrl(null, null));
 
-        return client.execute(post);
+            List<NameValuePair> parameters = new LinkedList<NameValuePair>();
+            if (refreshToken != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.REFRESH_TOKEN, refreshToken));
+            }
+            if (clientId != null && clientSecret != null) {
+                String authorization = BasicAuthHelper.createHeader(clientId, clientSecret);
+                post.setHeader("Authorization", authorization);
+            } else if (clientId != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, clientId));
+            }
+
+            UrlEncodedFormEntity formEntity;
+            try {
+                formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                throw new RuntimeException(e);
+            }
+            post.setEntity(formEntity);
+
+            return client.execute(post);
+        } finally {
+            closeClient(client);
+        }
     }
 
     public AccessTokenResponse doRefreshTokenRequest(String refreshToken, String password) {
-        HttpClient client = new DefaultHttpClient();
-        HttpPost post = new HttpPost(getRefreshTokenUrl());
-
-        List<NameValuePair> parameters = new LinkedList<NameValuePair>();
-        if (grantType != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.GRANT_TYPE, grantType));
-        }
-        if (refreshToken != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.REFRESH_TOKEN, refreshToken));
-        }
-        if (clientId != null && password != null) {
-            String authorization = BasicAuthHelper.createHeader(clientId, password);
-            post.setHeader("Authorization", authorization);
-        }
-        else if (clientId != null) {
-            parameters.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, clientId));
-        }
-
-        UrlEncodedFormEntity formEntity;
+        CloseableHttpClient client = new DefaultHttpClient();
         try {
-            formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
-        post.setEntity(formEntity);
+            HttpPost post = new HttpPost(getRefreshTokenUrl());
 
+            List<NameValuePair> parameters = new LinkedList<NameValuePair>();
+            parameters.add(new BasicNameValuePair(OAuth2Constants.GRANT_TYPE, OAuth2Constants.REFRESH_TOKEN));
+
+            if (refreshToken != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.REFRESH_TOKEN, refreshToken));
+            }
+            if (clientId != null && password != null) {
+                String authorization = BasicAuthHelper.createHeader(clientId, password);
+                post.setHeader("Authorization", authorization);
+            } else if (clientId != null) {
+                parameters.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, clientId));
+            }
+
+            if (clientSessionState != null) {
+                parameters.add(new BasicNameValuePair(AdapterConstants.CLIENT_SESSION_STATE, clientSessionState));
+            }
+            if (clientSessionHost != null) {
+                parameters.add(new BasicNameValuePair(AdapterConstants.CLIENT_SESSION_HOST, clientSessionHost));
+            }
+
+            UrlEncodedFormEntity formEntity;
+            try {
+                formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
+            } catch (UnsupportedEncodingException e) {
+                throw new RuntimeException(e);
+            }
+            post.setEntity(formEntity);
+
+            try {
+                return new AccessTokenResponse(client.execute(post));
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to retrieve access token", e);
+            }
+        } finally {
+            closeClient(client);
+        }
+    }
+
+    public void closeClient(CloseableHttpClient client) {
         try {
-            return new AccessTokenResponse(client.execute(post));
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to retrieve access token", e);
+            client.close();
+        } catch (IOException ioe) {
+            throw new RuntimeException(ioe);
         }
     }
 
     public AccessToken verifyToken(String token) {
         try {
-            return RSATokenVerifier.verifyToken(token, realmPublicKey, realm);
+            return RSATokenVerifier.verifyToken(token, realmPublicKey, baseUrl + "/realms/" + realm);
         } catch (VerificationException e) {
             throw new RuntimeException("Failed to verify token", e);
         }
@@ -278,7 +416,7 @@ public class OAuthClient {
     }
 
     public void openLogout() {
-        UriBuilder b = OpenIDConnectService.logoutUrl(UriBuilder.fromUri(baseUrl));
+        UriBuilder b = OIDCLoginProtocolService.logoutUrl(UriBuilder.fromUri(baseUrl));
         if (redirectUri != null) {
             b.queryParam(OAuth2Constants.REDIRECT_URI, redirectUri);
         }
@@ -290,10 +428,8 @@ public class OAuthClient {
     }
 
     public String getLoginFormUrl() {
-        UriBuilder b = OpenIDConnectService.loginPageUrl(UriBuilder.fromUri(baseUrl));
-        if (responseType != null) {
-            b.queryParam(OAuth2Constants.RESPONSE_TYPE, responseType);
-        }
+        UriBuilder b = OIDCLoginProtocolService.authUrl(UriBuilder.fromUri(baseUrl));
+        b.queryParam(OAuth2Constants.RESPONSE_TYPE, OAuth2Constants.CODE);
         if (clientId != null) {
             b.queryParam(OAuth2Constants.CLIENT_ID, clientId);
         }
@@ -303,16 +439,27 @@ public class OAuthClient {
         if (state != null) {
             b.queryParam(OAuth2Constants.STATE, state);
         }
+        if(uiLocales != null){
+            b.queryParam(OAuth2Constants.UI_LOCALES_PARAM, uiLocales);
+        }
+        if (scope != null) {
+            b.queryParam(OAuth2Constants.SCOPE, scope);
+        }
         return b.build(realm).toString();
     }
 
     public String getAccessTokenUrl() {
-        UriBuilder b = OpenIDConnectService.accessCodeToTokenUrl(UriBuilder.fromUri(baseUrl));
+        UriBuilder b = OIDCLoginProtocolService.tokenUrl(UriBuilder.fromUri(baseUrl));
+        return b.build(realm).toString();
+    }
+
+    public String getTokenIntrospectionUrl() {
+        UriBuilder b = OIDCLoginProtocolService.tokenIntrospectionUrl(UriBuilder.fromUri(baseUrl));
         return b.build(realm).toString();
     }
 
     public String getLogoutUrl(String redirectUri, String sessionState) {
-        UriBuilder b = OpenIDConnectService.logoutUrl(UriBuilder.fromUri(baseUrl));
+        UriBuilder b = OIDCLoginProtocolService.logoutUrl(UriBuilder.fromUri(baseUrl));
         if (redirectUri != null) {
             b.queryParam(OAuth2Constants.REDIRECT_URI, redirectUri);
         }
@@ -323,12 +470,21 @@ public class OAuthClient {
     }
 
     public String getResourceOwnerPasswordCredentialGrantUrl() {
-        UriBuilder b = OpenIDConnectService.grantAccessTokenUrl(UriBuilder.fromUri(baseUrl));
+        UriBuilder b = OIDCLoginProtocolService.tokenUrl(UriBuilder.fromUri(baseUrl));
         return b.build(realm).toString();
     }
 
+    public String getResourceOwnerPasswordCredentialGrantUrl(String realm) {
+        UriBuilder b = OIDCLoginProtocolService.tokenUrl(UriBuilder.fromUri(baseUrl));
+        return b.build(realm).toString();
+    }
+
+    public String getServiceAccountUrl() {
+        return getResourceOwnerPasswordCredentialGrantUrl();
+    }
+
     public String getRefreshTokenUrl() {
-        UriBuilder b = OpenIDConnectService.refreshUrl(UriBuilder.fromUri(baseUrl));
+        UriBuilder b = OIDCLoginProtocolService.tokenUrl(UriBuilder.fromUri(baseUrl));
         return b.build(realm).toString();
     }
 
@@ -351,13 +507,28 @@ public class OAuthClient {
         return this;
     }
 
-    public OAuthClient responseType(String responseType) {
-        this.responseType = responseType;
+    public OAuthClient state(String state) {
+        this.state = state;
         return this;
     }
 
-    public OAuthClient state(String state) {
-        this.state = state;
+    public OAuthClient scope(String scope) {
+        this.scope = scope;
+        return this;
+    }
+
+    public OAuthClient uiLocales(String uiLocales){
+        this.uiLocales = uiLocales;
+        return this;
+    }
+
+    public OAuthClient clientSessionState(String client_session_state) {
+        this.clientSessionState = client_session_state;
+        return this;
+    }
+
+    public OAuthClient clientSessionHost(String client_session_host) {
+        this.clientSessionHost = client_session_host;
         return this;
     }
 

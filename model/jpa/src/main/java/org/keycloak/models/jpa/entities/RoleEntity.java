@@ -1,5 +1,27 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.models.jpa.entities;
 
+import org.hibernate.annotations.DynamicInsert;
+import org.hibernate.annotations.DynamicUpdate;
+
+import javax.persistence.Access;
+import javax.persistence.AccessType;
 import javax.persistence.Column;
 import javax.persistence.Entity;
 import javax.persistence.FetchType;
@@ -20,23 +42,34 @@ import java.util.Collection;
  * @version $Revision: 1 $
  */
 @Entity
+//@DynamicInsert
+//@DynamicUpdate
 @Table(name="KEYCLOAK_ROLE", uniqueConstraints = {
-        @UniqueConstraint(columnNames = { "NAME", "APP_REALM_CONSTRAINT" })
+        @UniqueConstraint(columnNames = { "NAME", "CLIENT_REALM_CONSTRAINT" })
 })
 @NamedQueries({
-        @NamedQuery(name="getAppRoleByName", query="select role from RoleEntity role where role.name = :name and role.application = :application"),
-        @NamedQuery(name="getRealmRoleByName", query="select role from RoleEntity role where role.applicationRole = false and role.name = :name and role.realm = :realm")
+        @NamedQuery(name="getClientRoles", query="select role from RoleEntity role where role.client = :client"),
+        @NamedQuery(name="getClientRoleIds", query="select role.id from RoleEntity role where role.client.id = :client"),
+        @NamedQuery(name="getClientRoleByName", query="select role from RoleEntity role where role.name = :name and role.client = :client"),
+        @NamedQuery(name="getClientRoleIdByName", query="select role.id from RoleEntity role where role.name = :name and role.client.id = :client"),
+        @NamedQuery(name="getRealmRoles", query="select role from RoleEntity role where role.clientRole = false and role.realm = :realm"),
+        @NamedQuery(name="getRealmRoleIds", query="select role.id from RoleEntity role where role.clientRole = false and role.realm.id = :realm"),
+        @NamedQuery(name="getRealmRoleByName", query="select role from RoleEntity role where role.clientRole = false and role.name = :name and role.realm = :realm"),
+        @NamedQuery(name="getRealmRoleIdByName", query="select role.id from RoleEntity role where role.clientRole = false and role.name = :name and role.realm.id = :realm")
 })
 
 public class RoleEntity {
     @Id
-    @Column(name="id", length = 36)
+    @Column(name="ID", length = 36)
+    @Access(AccessType.PROPERTY) // we do this because relationships often fetch id, but not entity.  This avoids an extra SQL
     private String id;
 
     @Column(name = "NAME")
     private String name;
     @Column(name = "DESCRIPTION")
     private String description;
+    @Column(name = "SCOPE_PARAM_REQUIRED")
+    private boolean scopeParamRequired;
 
     // hax! couldn't get constraint to work properly
     @Column(name = "REALM_ID")
@@ -46,16 +79,16 @@ public class RoleEntity {
     @JoinColumn(name = "REALM")
     private RealmEntity realm;
 
-    @Column(name="APPLICATION_ROLE")
-    private boolean applicationRole;
+    @Column(name="CLIENT_ROLE")
+    private boolean clientRole;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "APPLICATION")
-    private ApplicationEntity application;
+    @JoinColumn(name = "CLIENT")
+    private ClientEntity client;
 
-    // Hack to ensure that either name+application or name+realm are unique. Needed due to MS-SQL as it don't allow multiple NULL values in the column, which is part of constraint
-    @Column(name="APP_REALM_CONSTRAINT", length = 36)
-    private String appRealmConstraint;
+    // Hack to ensure that either name+client or name+realm are unique. Needed due to MS-SQL as it don't allow multiple NULL values in the column, which is part of constraint
+    @Column(name="CLIENT_REALM_CONSTRAINT", length = 36)
+    private String clientRealmConstraint;
 
     @ManyToMany(fetch = FetchType.LAZY, cascade = {})
     @JoinTable(name = "COMPOSITE_ROLE", joinColumns = @JoinColumn(name = "COMPOSITE"), inverseJoinColumns = @JoinColumn(name = "CHILD_ROLE"))
@@ -77,6 +110,8 @@ public class RoleEntity {
         this.realmId = realmId;
     }
 
+
+
     public String getName() {
         return name;
     }
@@ -93,6 +128,14 @@ public class RoleEntity {
         this.description = description;
     }
 
+    public boolean isScopeParamRequired() {
+        return scopeParamRequired;
+    }
+
+    public void setScopeParamRequired(boolean scopeParamRequired) {
+        this.scopeParamRequired = scopeParamRequired;
+    }
+
     public Collection<RoleEntity> getCompositeRoles() {
         return compositeRoles;
     }
@@ -101,12 +144,12 @@ public class RoleEntity {
         this.compositeRoles = compositeRoles;
     }
 
-    public boolean isApplicationRole() {
-        return applicationRole;
+    public boolean isClientRole() {
+        return clientRole;
     }
 
-    public void setApplicationRole(boolean applicationRole) {
-        this.applicationRole = applicationRole;
+    public void setClientRole(boolean clientRole) {
+        this.clientRole = clientRole;
     }
 
     public RealmEntity getRealm() {
@@ -115,31 +158,32 @@ public class RoleEntity {
 
     public void setRealm(RealmEntity realm) {
         this.realm = realm;
-        this.appRealmConstraint = realm.getId();
+        this.clientRealmConstraint = realm.getId();
     }
 
-    public ApplicationEntity getApplication() {
-        return application;
+    public ClientEntity getClient() {
+        return client;
     }
 
-    public void setApplication(ApplicationEntity application) {
-        this.application = application;
-        if (application != null) {
-            this.appRealmConstraint = application.getId();
+    public void setClient(ClientEntity client) {
+        this.client = client;
+        if (client != null) {
+            this.clientRealmConstraint = client.getId();
         }
     }
 
-    public String getAppRealmConstraint() {
-        return appRealmConstraint;
+    public String getClientRealmConstraint() {
+        return clientRealmConstraint;
     }
 
-    public void setAppRealmConstraint(String appRealmConstraint) {
-        this.appRealmConstraint = appRealmConstraint;
+    public void setClientRealmConstraint(String clientRealmConstraint) {
+        this.clientRealmConstraint = clientRealmConstraint;
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
+        if (o == null) return false;
         if (!(o instanceof RoleEntity)) return false;
 
         RoleEntity that = (RoleEntity) o;

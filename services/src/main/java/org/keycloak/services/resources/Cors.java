@@ -1,11 +1,27 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.keycloak.services.resources;
 
-import org.jboss.logging.Logger;
 import org.jboss.resteasy.spi.HttpRequest;
 import org.jboss.resteasy.spi.HttpResponse;
 import org.keycloak.models.ClientModel;
 import org.keycloak.representations.AccessToken;
-import org.keycloak.util.CollectionUtil;
+import org.keycloak.common.util.CollectionUtil;
+import org.keycloak.services.ServicesLogger;
 
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.ResponseBuilder;
@@ -18,7 +34,7 @@ import java.util.concurrent.TimeUnit;
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
 public class Cors {
-    protected static final Logger logger = Logger.getLogger(Cors.class);
+    protected static final ServicesLogger logger = ServicesLogger.ROOT_LOGGER;
 
     public static final long DEFAULT_MAX_AGE = TimeUnit.HOURS.toSeconds(1);
     public static final String DEFAULT_ALLOW_METHODS = "GET, HEAD, OPTIONS";
@@ -35,7 +51,6 @@ public class Cors {
     public static final String ACCESS_CONTROL_MAX_AGE = "Access-Control-Max-Age";
 
     public static final String ACCESS_CONTROL_ALLOW_ORIGIN_WILDCARD = "*";
-
 
     private HttpRequest request;
     private ResponseBuilder builder;
@@ -116,27 +131,35 @@ public class Cors {
 
         builder.header(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
 
-        if (allowedMethods != null) {
-            builder.header(ACCESS_CONTROL_ALLOW_METHODS, CollectionUtil.join(allowedMethods));
-        } else {
-            builder.header(ACCESS_CONTROL_ALLOW_METHODS, DEFAULT_ALLOW_METHODS);
+        if (preflight) {
+            if (allowedMethods != null) {
+                builder.header(ACCESS_CONTROL_ALLOW_METHODS, CollectionUtil.join(allowedMethods));
+            } else {
+                builder.header(ACCESS_CONTROL_ALLOW_METHODS, DEFAULT_ALLOW_METHODS);
+            }
         }
 
-        if (exposedHeaders != null) {
+        if (!preflight && exposedHeaders != null) {
             builder.header(ACCESS_CONTROL_EXPOSE_HEADERS, CollectionUtil.join(exposedHeaders));
         }
 
         builder.header(ACCESS_CONTROL_ALLOW_CREDENTIALS, Boolean.toString(auth));
-        if (auth) {
-            builder.header(ACCESS_CONTROL_ALLOW_HEADERS, String.format("%s, %s", DEFAULT_ALLOW_HEADERS, AUTHORIZATION_HEADER));
-        } else {
-            builder.header(ACCESS_CONTROL_ALLOW_HEADERS, DEFAULT_ALLOW_HEADERS);
+
+        if (preflight) {
+            if (auth) {
+                builder.header(ACCESS_CONTROL_ALLOW_HEADERS, String.format("%s, %s", DEFAULT_ALLOW_HEADERS, AUTHORIZATION_HEADER));
+            } else {
+                builder.header(ACCESS_CONTROL_ALLOW_HEADERS, DEFAULT_ALLOW_HEADERS);
+            }
         }
 
-        builder.header(ACCESS_CONTROL_MAX_AGE, DEFAULT_MAX_AGE);
+        if (preflight) {
+            builder.header(ACCESS_CONTROL_MAX_AGE, DEFAULT_MAX_AGE);
+        }
 
         return builder.build();
     }
+
     public void build(HttpResponse response) {
         String origin = request.getHttpHeaders().getRequestHeaders().getFirst(ORIGIN_HEADER);
         if (origin == null) {
@@ -148,27 +171,36 @@ public class Cors {
             logger.debug("!preflight and no origin");
             return;
         }
+
         logger.debug("build CORS headers and return");
+
         response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
 
-        if (allowedMethods != null) {
-            response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_METHODS, CollectionUtil.join(allowedMethods));
-        } else {
-            response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_METHODS, DEFAULT_ALLOW_METHODS);
+        if (preflight) {
+            if (allowedMethods != null) {
+                response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_METHODS, CollectionUtil.join(allowedMethods));
+            } else {
+                response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_METHODS, DEFAULT_ALLOW_METHODS);
+            }
         }
 
-        if (exposedHeaders != null) {
+        if (!preflight && exposedHeaders != null) {
             response.getOutputHeaders().add(ACCESS_CONTROL_EXPOSE_HEADERS, CollectionUtil.join(exposedHeaders));
         }
 
         response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_CREDENTIALS, Boolean.toString(auth));
-        if (auth) {
-            response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_HEADERS, String.format("%s, %s", DEFAULT_ALLOW_HEADERS, AUTHORIZATION_HEADER));
-        } else {
-            response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_HEADERS, DEFAULT_ALLOW_HEADERS);
+
+        if (preflight) {
+            if (auth) {
+                response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_HEADERS, String.format("%s, %s", DEFAULT_ALLOW_HEADERS, AUTHORIZATION_HEADER));
+            } else {
+                response.getOutputHeaders().add(ACCESS_CONTROL_ALLOW_HEADERS, DEFAULT_ALLOW_HEADERS);
+            }
         }
 
-        response.getOutputHeaders().add(ACCESS_CONTROL_MAX_AGE, DEFAULT_MAX_AGE);
+        if (preflight) {
+            response.getOutputHeaders().add(ACCESS_CONTROL_MAX_AGE, DEFAULT_MAX_AGE);
+        }
     }
 
 }

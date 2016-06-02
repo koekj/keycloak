@@ -1,9 +1,26 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.proxy;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.undertow.Undertow;
 import io.undertow.security.api.AuthenticationMechanism;
 import io.undertow.security.api.AuthenticationMode;
-import io.undertow.security.handlers.AuthenticationCallHandler;
 import io.undertow.security.handlers.AuthenticationMechanismsHandler;
 import io.undertow.security.handlers.SecurityInitialHandler;
 import io.undertow.security.idm.Account;
@@ -15,16 +32,16 @@ import io.undertow.server.HttpServerExchange;
 import io.undertow.server.handlers.PathHandler;
 import io.undertow.server.handlers.ResponseCodeHandler;
 import io.undertow.server.handlers.proxy.ProxyHandler;
+import io.undertow.server.handlers.ProxyPeerAddressHandler;
 import io.undertow.server.handlers.proxy.SimpleProxyClientProvider;
 import io.undertow.server.session.InMemorySessionManager;
 import io.undertow.server.session.SessionAttachmentHandler;
 import io.undertow.server.session.SessionCookieConfig;
 import io.undertow.server.session.SessionManager;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.map.annotate.JsonSerialize;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jboss.logging.Logger;
 import org.keycloak.adapters.AdapterDeploymentContext;
-import org.keycloak.adapters.FindFile;
+import org.keycloak.common.util.FindFile;
 import org.keycloak.adapters.KeycloakDeployment;
 import org.keycloak.adapters.KeycloakDeploymentBuilder;
 import org.keycloak.adapters.NodesRegistrationManagement;
@@ -32,10 +49,9 @@ import org.keycloak.adapters.undertow.UndertowAuthenticatedActionsHandler;
 import org.keycloak.adapters.undertow.UndertowAuthenticationMechanism;
 import org.keycloak.adapters.undertow.UndertowPreAuthActionsHandler;
 import org.keycloak.adapters.undertow.UndertowUserSessionManagement;
-import org.keycloak.enums.SslRequired;
+import org.keycloak.common.enums.SslRequired;
 import org.keycloak.representations.adapters.config.AdapterConfig;
-import org.keycloak.util.CertificateUtils;
-import org.keycloak.util.PemUtils;
+import org.keycloak.common.util.CertificateUtils;
 import org.keycloak.util.SystemPropertiesJsonParserFactory;
 import org.xnio.Option;
 
@@ -53,10 +69,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -77,6 +90,8 @@ public class ProxyServerBuilder {
     protected PathHandler root = new PathHandler(NOT_FOUND);
     protected HttpHandler proxyHandler;
     protected boolean sendAccessToken;
+
+    protected Map<String, String> headerNameConfig;
 
     public ProxyServerBuilder target(String uri) {
         SimpleProxyClientProvider provider = null;
@@ -100,6 +115,12 @@ public class ProxyServerBuilder {
         this.sendAccessToken = flag;
         return this;
     }
+
+    public ProxyServerBuilder headerNameConfig(Map<String, String> headerNameConfig) {
+        this.headerNameConfig = headerNameConfig;
+        return this;
+    }
+
     public ApplicationBuilder application(AdapterConfig config) {
         return new ApplicationBuilder(config);
     }
@@ -115,6 +136,7 @@ public class ProxyServerBuilder {
         protected SecurityPathMatches.Builder constraintBuilder = new SecurityPathMatches.Builder();
         protected SecurityPathMatches matches;
         protected String errorPage;
+        protected boolean proxyAddressForwarding;
 
         public ApplicationBuilder base(String base) {
             this.base = base;
@@ -126,6 +148,11 @@ public class ProxyServerBuilder {
                 errorPage = errorPage.substring(1);
             }
             this.errorPage = errorPage;
+            return this;
+        }
+        
+        public ApplicationBuilder proxyAddressForwarding(boolean proxyAddressForwarding) {
+            this.proxyAddressForwarding = proxyAddressForwarding;
             return this;
         }
 
@@ -168,6 +195,11 @@ public class ProxyServerBuilder {
             }
             public ConstraintBuilder authenticate() {
                 semantic = SecurityInfo.EmptyRoleSemantic.AUTHENTICATE;
+                return this;
+            }
+
+            public ConstraintBuilder injectIfAuthenticated() {
+                semantic = SecurityInfo.EmptyRoleSemantic.PERMIT_AND_INJECT_IF_AUTHENTICATED;
                 return this;
             }
 
@@ -224,7 +256,7 @@ public class ProxyServerBuilder {
                     errorPage = base + "/" + errorPage;
                 }
             }
-            handler = new ConstraintAuthorizationHandler(handler, errorPage, sendAccessToken);
+            handler = new ConstraintAuthorizationHandler(handler, errorPage, sendAccessToken, headerNameConfig);
             handler = new ProxyAuthenticationCallHandler(handler);
             handler = new ConstraintMatcherHandler(matches, handler, toWrap, errorPage);
             final List<AuthenticationMechanism> mechanisms = new LinkedList<AuthenticationMechanism>();
@@ -248,7 +280,9 @@ public class ProxyServerBuilder {
                 }
             };
             handler = new UndertowPreAuthActionsHandler(deploymentContext, userSessionManagement, sessionManager, handler);
-            return new SecurityInitialHandler(AuthenticationMode.PRO_ACTIVE, identityManager, handler);
+            handler = new SecurityInitialHandler(AuthenticationMode.PRO_ACTIVE, identityManager, handler);
+            if (proxyAddressForwarding) handler = new ProxyPeerAddressHandler(handler);
+            return handler;
         }
 
         private HttpHandler sessionHandling(HttpHandler toWrap) {
@@ -326,7 +360,7 @@ public class ProxyServerBuilder {
 
     public static ProxyConfig loadConfig(InputStream is) {
         ObjectMapper mapper = new ObjectMapper(new SystemPropertiesJsonParserFactory());
-        mapper.setSerializationInclusion(JsonSerialize.Inclusion.NON_DEFAULT);
+        mapper.setSerializationInclusion(JsonInclude.Include.NON_DEFAULT);
         ProxyConfig proxyConfig;
         try {
             proxyConfig = mapper.readValue(is, ProxyConfig.class);
@@ -358,7 +392,8 @@ public class ProxyServerBuilder {
         for (ProxyConfig.Application application : config.getApplications()) {
             ApplicationBuilder applicationBuilder = builder.application(application.getAdapterConfig())
                     .base(application.getBasePath())
-                    .errorPage(application.getErrorPage());
+                    .errorPage(application.getErrorPage())
+                    .proxyAddressForwarding(application.isProxyAddressForwarding());
 
             if (application.getConstraints() != null) {
                 for (ProxyConfig.Constraint constraint : application.getConstraints()) {
@@ -375,6 +410,7 @@ public class ProxyServerBuilder {
                     if (constraint.isDeny()) constraintBuilder.deny();
                     if (constraint.isPermit()) constraintBuilder.permit();
                     if (constraint.isAuthenticate()) constraintBuilder.authenticate();
+                    if (constraint.isPermitAndInject()) constraintBuilder.injectIfAuthenticated();
                     constraintBuilder.add();
                 }
             }
@@ -385,6 +421,7 @@ public class ProxyServerBuilder {
 
     public static void initOptions(ProxyConfig config, ProxyServerBuilder builder) {
         builder.sendAccessToken(config.isSendAccessToken());
+        builder.headerNameConfig(config.getHeaderNames());
         if (config.getBufferSize() != null) builder.setBufferSize(config.getBufferSize());
         if (config.getBuffersPerRegion() != null) builder.setBuffersPerRegion(config.getBuffersPerRegion());
         if (config.getIoThreads() != null) builder.setIoThreads(config.getIoThreads());
@@ -419,7 +456,9 @@ public class ProxyServerBuilder {
                 log.warn("Generating temporary SSL cert");
                 KeyPair keyPair = null;
                 try {
-                    keyPair = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+                    KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+                    generator.initialize(2048);
+                    keyPair = generator.generateKeyPair();
                 } catch (NoSuchAlgorithmException e) {
                     throw new RuntimeException(e);
                 }

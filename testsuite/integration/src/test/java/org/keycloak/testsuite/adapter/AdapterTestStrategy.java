@@ -1,59 +1,50 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2012, Red Hat, Inc., and individual contributors
- * as indicated by the @author tags. See the copyright.txt file in the
- * distribution for a full listing of individual contributors.
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.keycloak.testsuite.adapter;
 
+import org.apache.http.conn.params.ConnManagerParams;
 import org.junit.Assert;
-import org.junit.Rule;
-import org.junit.Test;
 import org.junit.rules.ExternalResource;
-import org.keycloak.Config;
 import org.keycloak.OAuth2Constants;
-import org.keycloak.Version;
+import org.keycloak.adapters.OIDCAuthenticationError;
+import org.keycloak.common.Version;
+import org.keycloak.representations.VersionRepresentation;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.constants.AdapterConstants;
-import org.keycloak.models.ApplicationModel;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
-import org.keycloak.models.UserSessionModel;
-import org.keycloak.protocol.oidc.OpenIDConnectService;
-import org.keycloak.protocol.oidc.TokenManager;
-import org.keycloak.representations.AccessToken;
+import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.services.managers.RealmManager;
 import org.keycloak.services.managers.ResourceAdminManager;
-import org.keycloak.services.resources.admin.AdminRoot;
-import org.keycloak.services.resources.admin.ApplicationsResource;
-import org.keycloak.services.resources.admin.RealmAdminResource;
-import org.keycloak.services.resources.admin.RealmsAdminResource;
 import org.keycloak.testsuite.OAuthClient;
+import org.keycloak.testsuite.pages.AccountSessionsPage;
 import org.keycloak.testsuite.pages.LoginPage;
 import org.keycloak.testsuite.rule.AbstractKeycloakRule;
+import org.keycloak.testsuite.rule.ErrorServlet;
 import org.keycloak.testsuite.rule.KeycloakRule;
 import org.keycloak.testsuite.rule.WebResource;
 import org.keycloak.testsuite.rule.WebRule;
-import org.keycloak.testutils.KeycloakServer;
+import org.keycloak.testsuite.KeycloakServer;
 import org.keycloak.util.BasicAuthHelper;
+import org.keycloak.common.util.Time;
 import org.openqa.selenium.WebDriver;
 
 import javax.ws.rs.client.Client;
@@ -61,13 +52,14 @@ import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.Entity;
 import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.Form;
-import javax.ws.rs.core.GenericType;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.keycloak.representations.idm.UserRepresentation;
 
 /**
  * Tests Undertow Adapter
@@ -96,7 +88,10 @@ public class AdapterTestStrategy extends ExternalResource {
     @WebResource
     protected InputPage inputPage;
 
-    protected String LOGIN_URL = OpenIDConnectService.loginPageUrl(UriBuilder.fromUri(AUTH_SERVER_URL)).build("demo").toString();
+    @WebResource
+    protected AccountSessionsPage accountSessionsPage;
+
+    protected String LOGIN_URL = OIDCLoginProtocolService.authUrl(UriBuilder.fromUri(AUTH_SERVER_URL)).build("demo").toString();
 
     public AdapterTestStrategy(String AUTH_SERVER_URL, String APP_SERVER_BASE_URL, AbstractKeycloakRule keycloakRule) {
         this.AUTH_SERVER_URL = AUTH_SERVER_URL;
@@ -113,9 +108,6 @@ public class AdapterTestStrategy extends ExternalResource {
     }
 
     public static RealmModel baseAdapterTestInitialization(KeycloakSession session, RealmManager manager, RealmModel adminRealm, Class<?> clazz) {
-        // Required by admin client
-        adminRealm.setPasswordCredentialGrantAllowed(true);
-
         RealmRepresentation representation = KeycloakServer.loadJson(clazz.getResourceAsStream("/adapter-test/demorealm.json"), RealmRepresentation.class);
         RealmModel demoRealm = manager.importRealm(representation);
         return demoRealm;
@@ -133,24 +125,6 @@ public class AdapterTestStrategy extends ExternalResource {
         webRule.after();
     }
 
-    protected String createAdminToken() {
-        KeycloakSession session = keycloakRule.startSession();
-        try {
-            RealmManager manager = new RealmManager(session);
-
-            RealmModel adminRealm = manager.getRealm(Config.getAdminRealm());
-            ApplicationModel adminConsole = adminRealm.getApplicationByName(Constants.ADMIN_CONSOLE_APPLICATION);
-            TokenManager tm = new TokenManager();
-            UserModel admin = session.users().getUserByUsername("admin", adminRealm);
-            UserSessionModel userSession = session.sessions().createUserSession(adminRealm, admin, "admin", null, "form", false);
-            AccessToken token = tm.createClientAccessToken(TokenManager.getAccess(null, adminConsole, admin), adminRealm, adminConsole, admin, userSession);
-            return tm.encodeToken(adminRealm, token);
-        } finally {
-            keycloakRule.stopSession(session, true);
-        }
-    }
-
-    @Test
     public void testSavedPostRequest() throws Exception {
         // test login to customer-portal which does a bearer request to customer-db
         driver.navigate().to(APP_SERVER_BASE_URL + "/input-portal");
@@ -165,10 +139,16 @@ public class AdapterTestStrategy extends ExternalResource {
         String pageSource = driver.getPageSource();
         System.out.println(pageSource);
         Assert.assertTrue(pageSource.contains("parameter=hello"));
+        // test that user principal and KeycloakSecurityContext available
+        driver.navigate().to(APP_SERVER_BASE_URL + "/input-portal/insecure");
+        System.out.println("insecure: ");
+        System.out.println(driver.getPageSource());
+        Assert.assertTrue(driver.getPageSource().contains("Insecure Page"));
+        if (System.getProperty("insecure.user.principal.unsupported") == null) Assert.assertTrue(driver.getPageSource().contains("UserPrincipal"));
 
         // test logout
 
-        String logoutUri = OpenIDConnectService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
+        String logoutUri = OIDCLoginProtocolService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
                 .queryParam(OAuth2Constants.REDIRECT_URI, APP_SERVER_BASE_URL + "/customer-portal").build("demo").toString();
         driver.navigate().to(logoutUri);
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
@@ -189,7 +169,6 @@ public class AdapterTestStrategy extends ExternalResource {
     }
 
 
-    @Test
     public void testLoginSSOAndLogout() throws Exception {
         // test login to customer-portal which does a bearer request to customer-db
         driver.navigate().to(APP_SERVER_BASE_URL + "/customer-portal");
@@ -210,28 +189,21 @@ public class AdapterTestStrategy extends ExternalResource {
         Assert.assertTrue(pageSource.contains("iPhone") && pageSource.contains("iPad"));
 
         // View stats
-        String adminToken = createAdminToken();
-
-        Client client = ClientBuilder.newClient();
-        UriBuilder authBase = UriBuilder.fromUri(AUTH_SERVER_URL);
-        WebTarget adminTarget = client.target(AdminRoot.realmsUrl(authBase)).path("demo");
-        Map<String, Integer> stats = adminTarget.path("application-session-stats").request()
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
-                .get(new GenericType<Map<String, Integer>>() {
-                });
-        Integer custSessionsCount = stats.get("customer-portal");
-        Assert.assertNotNull(custSessionsCount);
-        Assert.assertTrue(1 == custSessionsCount);
-        Integer prodStatsCount = stats.get("product-portal");
-        Assert.assertNotNull(prodStatsCount);
-        Assert.assertTrue(1 == prodStatsCount);
-
-        client.close();
-
+        List<Map<String, String>> stats = Keycloak.getInstance("http://localhost:8081/auth", "master", "admin", "admin", Constants.ADMIN_CLI_CLIENT_ID).realm("demo").getClientSessionStats();
+        Map<String, String> customerPortalStats = null;
+        Map<String, String> productPortalStats = null;
+        for (Map<String, String> s : stats) {
+            if (s.get("clientId").equals("customer-portal")) {
+                customerPortalStats = s;
+            } else if (s.get("clientId").equals("product-portal")) {
+                productPortalStats = s;
+            }
+        }
+        Assert.assertEquals(1, Integer.parseInt(customerPortalStats.get("active")));
+        Assert.assertEquals(1, Integer.parseInt(productPortalStats.get("active")));
 
         // test logout
-
-        String logoutUri = OpenIDConnectService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
+        String logoutUri = OIDCLoginProtocolService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
                 .queryParam(OAuth2Constants.REDIRECT_URI, APP_SERVER_BASE_URL + "/customer-portal").build("demo").toString();
         driver.navigate().to(logoutUri);
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
@@ -239,14 +211,8 @@ public class AdapterTestStrategy extends ExternalResource {
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
         driver.navigate().to(APP_SERVER_BASE_URL + "/customer-portal");
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
-        loginPage.cancel();
-        System.out.println(driver.getPageSource());
-        Assert.assertTrue(driver.getPageSource().contains("Error Page"));
-
-
     }
 
-    @Test
     public void testServletRequestLogout() throws Exception {
         // test login to customer-portal which does a bearer request to customer-db
         driver.navigate().to(APP_SERVER_BASE_URL + "/customer-portal");
@@ -288,7 +254,6 @@ public class AdapterTestStrategy extends ExternalResource {
 
     }
 
-    @Test
     public void testLoginSSOIdle() throws Exception {
         // test login to customer-portal which does a bearer request to customer-db
         driver.navigate().to(APP_SERVER_BASE_URL + "/customer-portal");
@@ -308,7 +273,7 @@ public class AdapterTestStrategy extends ExternalResource {
         session.getTransaction().commit();
         session.close();
 
-        Thread.sleep(2000);
+        Time.setOffset(2);
 
 
         // test SSO
@@ -320,9 +285,10 @@ public class AdapterTestStrategy extends ExternalResource {
         realm.setSsoSessionIdleTimeout(originalIdle);
         session.getTransaction().commit();
         session.close();
+
+        Time.setOffset(0);
     }
 
-    @Test
     public void testLoginSSOIdleRemoveExpiredUserSessions() throws Exception {
         // test login to customer-portal which does a bearer request to customer-db
         driver.navigate().to(APP_SERVER_BASE_URL + "/customer-portal");
@@ -342,11 +308,11 @@ public class AdapterTestStrategy extends ExternalResource {
         session.getTransaction().commit();
         session.close();
 
-        Thread.sleep(2000);
+        Time.setOffset(2);
 
         session = keycloakRule.startSession();
         realm = session.realms().getRealmByName("demo");
-        session.sessions().removeExpiredUserSessions(realm);
+        session.sessions().removeExpired(realm);
         session.getTransaction().commit();
         session.close();
 
@@ -358,13 +324,14 @@ public class AdapterTestStrategy extends ExternalResource {
         realm = session.realms().getRealmByName("demo");
         // need to cleanup so other tests don't fail, so invalidate http sessions on remote clients.
         UserModel user = session.users().getUserByUsername("bburke@redhat.com", realm);
-        new ResourceAdminManager().logoutUser(null, realm, user, session);
+        new ResourceAdminManager(session).logoutUser(null, realm, user, session);
         realm.setSsoSessionIdleTimeout(originalIdle);
         session.getTransaction().commit();
         session.close();
+
+        Time.setOffset(0);
     }
 
-    @Test
     public void testLoginSSOMax() throws Exception {
         // test login to customer-portal which does a bearer request to customer-db
         driver.navigate().to(APP_SERVER_BASE_URL + "/customer-portal");
@@ -384,7 +351,7 @@ public class AdapterTestStrategy extends ExternalResource {
         session.getTransaction().commit();
         session.close();
 
-        Thread.sleep(2000);
+        Time.setOffset(2);
 
 
         // test SSO
@@ -396,13 +363,14 @@ public class AdapterTestStrategy extends ExternalResource {
         realm.setSsoSessionMaxLifespan(original);
         session.getTransaction().commit();
         session.close();
+
+        Time.setOffset(0);
     }
 
     /**
      * KEYCLOAK-518
      * @throws Exception
      */
-    @Test
     public void testNullBearerToken() throws Exception {
         Client client = ClientBuilder.newClient();
         WebTarget target = client.target(APP_SERVER_BASE_URL + "/customer-db/");
@@ -417,40 +385,107 @@ public class AdapterTestStrategy extends ExternalResource {
     }
 
     /**
+     * KEYCLOAK-1368
+     * @throws Exception
+     */
+    public void testNullBearerTokenCustomErrorPage() throws Exception {
+        ErrorServlet.authError = null;
+        Client client = ClientBuilder.newClient();
+        WebTarget target = client.target(APP_SERVER_BASE_URL + "/customer-db-error-page/");
+
+        Response response = target.request().get();
+
+        // TODO: follow redirects automatically if possible
+        if (response.getStatus() == 302) {
+            String location = response.getHeaderString(HttpHeaders.LOCATION);
+            response.close();
+            response = client.target(location).request().get();
+        }
+        Assert.assertEquals(401, response.getStatus());
+        String errorPageResponse = response.readEntity(String.class);
+        Assert.assertTrue(errorPageResponse.contains("Error Page"));
+        response.close();
+        Assert.assertNotNull(ErrorServlet.authError);
+        OIDCAuthenticationError error = (OIDCAuthenticationError)ErrorServlet.authError;
+        Assert.assertEquals(OIDCAuthenticationError.Reason.NO_BEARER_TOKEN, error.getReason());
+
+        ErrorServlet.authError = null;
+        response = target.request().header(HttpHeaders.AUTHORIZATION, "Bearer null").get();
+        // TODO: follow redirects automatically if possible
+        if (response.getStatus() == 302) {
+            String location = response.getHeaderString(HttpHeaders.LOCATION);
+            response.close();
+            response = client.target(location).request().get();
+        }
+        Assert.assertEquals(401, response.getStatus());
+        errorPageResponse = response.readEntity(String.class);
+        Assert.assertTrue(errorPageResponse.contains("Error Page"));
+        response.close();
+        Assert.assertNotNull(ErrorServlet.authError);
+        error = (OIDCAuthenticationError)ErrorServlet.authError;
+        Assert.assertEquals(OIDCAuthenticationError.Reason.INVALID_TOKEN, error.getReason());
+
+        client.close();
+
+    }
+
+    /**
+     * KEYCLOAK-3016
+     * @throws Exception
+     */
+    public void testBasicAuthErrorHandling() throws Exception {
+        Client client = ClientBuilder.newClient();
+        WebTarget target = client.target(APP_SERVER_BASE_URL + "/customer-db/");
+        Response response = target.request().get();
+        Assert.assertEquals(401, response.getStatus());
+        response.close();
+
+        // The number of iterations should be HttpClient's connection pool size + 1.
+        final int LIMIT = ConnManagerParams.DEFAULT_MAX_TOTAL_CONNECTIONS + 1;
+        for (int i = 0; i < LIMIT; i++) {
+            System.out.println("Testing Basic Auth with bad credentials " + i);
+            response = target.request().header(HttpHeaders.AUTHORIZATION, "Basic dXNlcm5hbWU6cGFzc3dvcmQ=").get();
+            Assert.assertEquals(401, response.getStatus());
+            response.close();
+        }
+
+        client.close();
+    }
+
+    /**
      * KEYCLOAK-518
      * @throws Exception
      */
-    @Test
     public void testBadUser() throws Exception {
         Client client = ClientBuilder.newClient();
         UriBuilder builder = UriBuilder.fromUri(AUTH_SERVER_URL);
-        URI uri = OpenIDConnectService.grantAccessTokenUrl(builder).build("demo");
+        URI uri = OIDCLoginProtocolService.tokenUrl(builder).build("demo");
         WebTarget target = client.target(uri);
         String header = BasicAuthHelper.createHeader("customer-portal", "password");
         Form form = new Form();
-        form.param("username", "monkey@redhat.com")
+        form.param(OAuth2Constants.GRANT_TYPE, OAuth2Constants.PASSWORD)
+            .param("username", "monkey@redhat.com")
             .param("password", "password");
         Response response = target.request()
                 .header(HttpHeaders.AUTHORIZATION, header)
                 .post(Entity.form(form));
-        Assert.assertEquals(400, response.getStatus());
+        Assert.assertEquals(401, response.getStatus());
         response.close();
         client.close();
 
     }
 
-    @Test
     public void testVersion() throws Exception {
         Client client = ClientBuilder.newClient();
         WebTarget target = client.target(AUTH_SERVER_URL).path("version");
-        Version version = target.request().get(Version.class);
+        VersionRepresentation version = target.request().get(VersionRepresentation.class);
         Assert.assertNotNull(version);
         Assert.assertNotNull(version.getVersion());
         Assert.assertNotNull(version.getBuildTime());
         Assert.assertNotEquals(version.getVersion(), Version.UNKNOWN);
         Assert.assertNotEquals(version.getBuildTime(), Version.UNKNOWN);
 
-        Version version2 = client.target(APP_SERVER_BASE_URL + "/secure-portal").path(AdapterConstants.K_VERSION).request().get(Version.class);
+        VersionRepresentation version2 = client.target(APP_SERVER_BASE_URL + "/secure-portal").path(AdapterConstants.K_VERSION).request().get(VersionRepresentation.class);
         Assert.assertNotNull(version2);
         Assert.assertNotNull(version2.getVersion());
         Assert.assertNotNull(version2.getBuildTime());
@@ -462,7 +497,6 @@ public class AdapterTestStrategy extends ExternalResource {
 
 
 
-    @Test
     public void testAuthenticated() throws Exception {
         // test login to customer-portal which does a bearer request to customer-db
         driver.navigate().to(APP_SERVER_BASE_URL + "/secure-portal");
@@ -477,10 +511,12 @@ public class AdapterTestStrategy extends ExternalResource {
 
         // test logout
 
-        String logoutUri = OpenIDConnectService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
+        String logoutUri = OIDCLoginProtocolService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
                 .queryParam(OAuth2Constants.REDIRECT_URI, APP_SERVER_BASE_URL + "/secure-portal").build("demo").toString();
         driver.navigate().to(logoutUri);
-        Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
+        String currentUrl = driver.getCurrentUrl();
+        pageSource = driver.getPageSource();
+        Assert.assertTrue(currentUrl.startsWith(LOGIN_URL));
         driver.navigate().to(APP_SERVER_BASE_URL + "/secure-portal");
         Assert.assertTrue(driver.getCurrentUrl().startsWith(LOGIN_URL));
     }
@@ -490,7 +526,6 @@ public class AdapterTestStrategy extends ExternalResource {
      *
      * @throws Throwable
      */
-    @Test
     public void testSingleSessionInvalidated() throws Throwable {
         AdapterTestStrategy browser1 = this;
         AdapterTestStrategy browser2 = new AdapterTestStrategy(AUTH_SERVER_URL, APP_SERVER_BASE_URL, keycloakRule);
@@ -503,7 +538,7 @@ public class AdapterTestStrategy extends ExternalResource {
             loginAndCheckSession(browser2.driver, browser2.loginPage);
 
             // Logout in browser1
-            String logoutUri = OpenIDConnectService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
+            String logoutUri = OIDCLoginProtocolService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
                     .queryParam(OAuth2Constants.REDIRECT_URI, APP_SERVER_BASE_URL + "/session-portal").build("demo").toString();
             browser1.driver.navigate().to(logoutUri);
             Assert.assertTrue(browser1.driver.getCurrentUrl().startsWith(LOGIN_URL));
@@ -528,7 +563,6 @@ public class AdapterTestStrategy extends ExternalResource {
     /**
      * KEYCLOAK-741
      */
-    @Test
     public void testSessionInvalidatedAfterFailedRefresh() throws Throwable {
         final AtomicInteger origTokenLifespan = new AtomicInteger();
 
@@ -536,7 +570,7 @@ public class AdapterTestStrategy extends ExternalResource {
         keycloakRule.update(new KeycloakRule.KeycloakSetup() {
             @Override
             public void config(RealmManager manager, RealmModel adminstrationRealm, RealmModel demoRealm) {
-                ApplicationModel sessionPortal = demoRealm.getApplicationByName("session-portal");
+                ClientModel sessionPortal = demoRealm.getClientByClientId("session-portal");
                 sessionPortal.setManagementUrl(null);
 
                 origTokenLifespan.set(demoRealm.getAccessTokenLifespan());
@@ -548,12 +582,12 @@ public class AdapterTestStrategy extends ExternalResource {
         loginAndCheckSession(driver, loginPage);
 
         // Logout
-        String logoutUri = OpenIDConnectService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
+        String logoutUri = OIDCLoginProtocolService.logoutUrl(UriBuilder.fromUri(AUTH_SERVER_URL))
                 .queryParam(OAuth2Constants.REDIRECT_URI, APP_SERVER_BASE_URL + "/session-portal").build("demo").toString();
         driver.navigate().to(logoutUri);
 
         // Wait until accessToken is expired
-        Thread.sleep(2000);
+        Time.setOffset(2);
 
         // Assert that http session was invalidated
         driver.navigate().to(APP_SERVER_BASE_URL + "/session-portal");
@@ -568,32 +602,51 @@ public class AdapterTestStrategy extends ExternalResource {
 
             @Override
             public void config(RealmManager manager, RealmModel adminstrationRealm, RealmModel demoRealm) {
-                ApplicationModel sessionPortal = demoRealm.getApplicationByName("session-portal");
+                ClientModel sessionPortal = demoRealm.getClientByClientId("session-portal");
                 sessionPortal.setManagementUrl(APP_SERVER_BASE_URL + "/session-portal");
 
                 demoRealm.setAccessTokenLifespan(origTokenLifespan.get());
             }
 
         }, "demo");
+
+        Time.setOffset(0);
     }
 
     /**
      * KEYCLOAK-942
      */
-    @Test
     public void testAdminApplicationLogout() throws Throwable {
         // login as bburke
         loginAndCheckSession(driver, loginPage);
 
         // logout mposolda with admin client
-        Keycloak keycloakAdmin = Keycloak.getInstance(AUTH_SERVER_URL, "master", "admin", "admin", Constants.ADMIN_CONSOLE_APPLICATION);
-        keycloakAdmin.realm("demo").applications().get("session-portal").logoutUser("mposolda");
+        Keycloak keycloakAdmin = Keycloak.getInstance(AUTH_SERVER_URL, "master", "admin", "admin", Constants.ADMIN_CLI_CLIENT_ID);
+        UserRepresentation mposolda = keycloakAdmin.realm("demo").users().search("mposolda", null, null, null, null, null).get(0);
+        keycloakAdmin.realm("demo").users().get(mposolda.getId()).logout();
 
         // bburke should be still logged with original httpSession in our browser window
         driver.navigate().to(APP_SERVER_BASE_URL + "/session-portal");
         Assert.assertEquals(driver.getCurrentUrl(), APP_SERVER_BASE_URL + "/session-portal" + slash);
         String pageSource = driver.getPageSource();
         Assert.assertTrue(pageSource.contains("Counter=3"));
+    }
+
+    /**
+     * KEYCLOAK-1216
+     */
+    public void testAccountManagementSessionsLogout() throws Throwable {
+        // login as bburke
+        loginAndCheckSession(driver, loginPage);
+
+        // logout sessions in account management
+        accountSessionsPage.realm("demo");
+        accountSessionsPage.open();
+        Assert.assertTrue(accountSessionsPage.isCurrent());
+        accountSessionsPage.logoutAll();
+
+        // Assert I need to login again (logout was propagated to the app)
+        loginAndCheckSession(driver, loginPage);
     }
 
     protected void loginAndCheckSession(WebDriver driver, LoginPage loginPage) {

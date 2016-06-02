@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.testsuite.saml;
 
 import io.undertow.security.idm.Account;
@@ -36,6 +53,9 @@ public abstract class SamlKeycloakRule extends AbstractKeycloakRule {
             resp.setContentType("text/plain");
             OutputStream stream = resp.getOutputStream();
             Principal principal = req.getUserPrincipal();
+            stream.write("request-path: ".getBytes());
+            stream.write(req.getPathInfo().getBytes());
+            stream.write("\n".getBytes());
             stream.write("principal=".getBytes());
             if (principal == null) {
                 stream.write("null".getBytes());
@@ -49,6 +69,9 @@ public abstract class SamlKeycloakRule extends AbstractKeycloakRule {
             resp.setContentType("text/plain");
             OutputStream stream = resp.getOutputStream();
             Principal principal = req.getUserPrincipal();
+            stream.write("request-path: ".getBytes());
+            stream.write(req.getPathInfo().getBytes());
+            stream.write("\n".getBytes());
             stream.write("principal=".getBytes());
             if (principal == null) {
                 stream.write("null".getBytes());

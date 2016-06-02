@@ -1,72 +1,67 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2012, Red Hat, Inc., and individual contributors
- * as indicated by the @author tags. See the copyright.txt file in the
- * distribution for a full listing of individual contributors.
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
- * This is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as
- * published by the Free Software Foundation; either version 2.1 of
- * the License, or (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this software; if not, write to the Free
- * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.keycloak.services.resources;
 
 import org.jboss.logging.Logger;
-import org.jboss.resteasy.spi.BadRequestException;
-import org.jboss.resteasy.spi.HttpRequest;
-import org.keycloak.ClientConnection;
-import org.keycloak.account.AccountPages;
-import org.keycloak.account.AccountProvider;
+import org.keycloak.forms.account.AccountPages;
+import org.keycloak.forms.account.AccountProvider;
 import org.keycloak.events.Details;
 import org.keycloak.events.Event;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.events.EventStoreProvider;
 import org.keycloak.events.EventType;
+import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.models.AccountRoles;
-import org.keycloak.models.ApplicationModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.ClientSessionModel;
-import org.keycloak.models.Constants;
 import org.keycloak.models.FederatedIdentityModel;
 import org.keycloak.models.IdentityProviderModel;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.ModelDuplicateException;
+import org.keycloak.models.ModelException;
 import org.keycloak.models.ModelReadOnlyException;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserCredentialValueModel;
+import org.keycloak.models.UserFederationProvider;
+import org.keycloak.models.UserFederationProviderModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
+import org.keycloak.models.utils.CredentialValidation;
+import org.keycloak.models.utils.FormMessage;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.models.utils.ModelToRepresentation;
-import org.keycloak.models.utils.TimeBasedOTP;
-import org.keycloak.protocol.oidc.OpenIDConnect;
-import org.keycloak.protocol.oidc.OpenIDConnectService;
+import org.keycloak.protocol.oidc.OIDCLoginProtocol;
+import org.keycloak.protocol.oidc.utils.RedirectUtils;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.services.ForbiddenException;
+import org.keycloak.services.ServicesLogger;
+import org.keycloak.services.Urls;
 import org.keycloak.services.managers.AppAuthManager;
 import org.keycloak.services.managers.Auth;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.managers.ClientSessionCode;
-import org.keycloak.services.managers.ResourceAdminManager;
+import org.keycloak.services.managers.UserSessionManager;
 import org.keycloak.services.messages.Messages;
-import org.keycloak.services.resources.flows.Flows;
-import org.keycloak.services.resources.flows.OAuthRedirect;
-import org.keycloak.services.resources.flows.Urls;
-import org.keycloak.services.util.CookieHelper;
 import org.keycloak.services.util.ResolveRelative;
 import org.keycloak.services.validation.Validation;
-import org.keycloak.util.UriUtils;
+import org.keycloak.common.util.UriUtils;
+import org.keycloak.util.JsonSerialization;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
@@ -74,15 +69,14 @@ import javax.ws.rs.OPTIONS;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.Cookie;
-import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 import javax.ws.rs.core.Variant;
+
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.util.HashSet;
@@ -95,9 +89,9 @@ import java.util.UUID;
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
-public class AccountService {
+public class AccountService extends AbstractSecuredLocalService {
 
-    private static final Logger logger = Logger.getLogger(AccountService.class);
+    private static final ServicesLogger logger = ServicesLogger.ROOT_LOGGER;
 
     private static Set<String> VALID_PATHS = new HashSet<String>();
     static {
@@ -110,7 +104,7 @@ public class AccountService {
     }
 
     private static final EventType[] LOG_EVENTS = {EventType.LOGIN, EventType.LOGOUT, EventType.REGISTER, EventType.REMOVE_FEDERATED_IDENTITY, EventType.REMOVE_TOTP, EventType.SEND_RESET_PASSWORD,
-            EventType.SEND_VERIFY_EMAIL, EventType.SOCIAL_LINK, EventType.UPDATE_EMAIL, EventType.UPDATE_PASSWORD, EventType.UPDATE_PROFILE, EventType.UPDATE_TOTP, EventType.VERIFY_EMAIL};
+            EventType.SEND_VERIFY_EMAIL, EventType.FEDERATED_IDENTITY_LINK, EventType.UPDATE_EMAIL, EventType.UPDATE_PASSWORD, EventType.UPDATE_PROFILE, EventType.UPDATE_TOTP, EventType.VERIFY_EMAIL};
 
     private static final Set<String> LOG_DETAILS = new HashSet<String>();
     static {
@@ -123,36 +117,16 @@ public class AccountService {
         LOG_DETAILS.add(Details.AUTH_METHOD);
     }
 
-    public static final String KEYCLOAK_STATE_CHECKER = "KEYCLOAK_STATE_CHECKER";
-
-    private RealmModel realm;
-
-    @Context
-    private HttpRequest request;
-
-    @Context
-    protected HttpHeaders headers;
-
-    @Context
-    private UriInfo uriInfo;
-
-    @Context
-    private ClientConnection clientConnection;
-
-    @Context
-    private KeycloakSession session;
+    // Used when some other context (ie. IdentityBrokerService) wants to forward error to account management and display it here
+    public static final String ACCOUNT_MGMT_FORWARDED_ERROR_NOTE = "ACCOUNT_MGMT_FORWARDED_ERROR";
 
     private final AppAuthManager authManager;
-    private final ApplicationModel application;
     private EventBuilder event;
     private AccountProvider account;
-    private Auth auth;
     private EventStoreProvider eventStore;
-    private String stateChecker;
 
-    public AccountService(RealmModel realm, ApplicationModel application, EventBuilder event) {
-        this.realm = realm;
-        this.application = application;
+    public AccountService(RealmModel realm, ClientModel client, EventBuilder event) {
+        super(realm, client);
         this.event = event;
         this.authManager = new AppAuthManager();
     }
@@ -160,24 +134,16 @@ public class AccountService {
     public void init() {
         eventStore = session.getProvider(EventStoreProvider.class);
 
-        account = session.getProvider(AccountProvider.class).setRealm(realm).setUriInfo(uriInfo);
+        account = session.getProvider(AccountProvider.class).setRealm(realm).setUriInfo(uriInfo).setHttpHeaders(headers);
 
         AuthenticationManager.AuthResult authResult = authManager.authenticateBearerToken(session, realm, uriInfo, clientConnection, headers);
         if (authResult != null) {
-            auth = new Auth(realm, authResult.getToken(), authResult.getUser(), application, authResult.getSession(), false);
+            auth = new Auth(realm, authResult.getToken(), authResult.getUser(), client, authResult.getSession(), false);
         } else {
-            authResult = authManager.authenticateIdentityCookie(session, realm, uriInfo, clientConnection, headers);
+            authResult = authManager.authenticateIdentityCookie(session, realm);
             if (authResult != null) {
-                auth = new Auth(realm, authResult.getToken(), authResult.getUser(), application, authResult.getSession(), true);
-                Cookie cookie = headers.getCookies().get(KEYCLOAK_STATE_CHECKER);
-                if (cookie != null) {
-                    stateChecker = cookie.getValue();
-                } else {
-                    stateChecker = UUID.randomUUID().toString();
-                    String cookiePath = AuthenticationManager.getRealmCookiePath(realm, uriInfo);
-                    boolean secureOnly = realm.getSslRequired().isRequired(clientConnection);
-                    CookieHelper.addCookie(KEYCLOAK_STATE_CHECKER, stateChecker, cookiePath, null, null, -1, secureOnly, true);
-                }
+                auth = new Auth(realm, authResult.getToken(), authResult.getUser(), client, authResult.getSession(), true);
+                updateCsrfChecks();
                 account.setStateChecker(stateChecker);
             }
         }
@@ -205,14 +171,14 @@ public class AccountService {
             if (userSession != null) {
                 boolean associated = false;
                 for (ClientSessionModel c : userSession.getClientSessions()) {
-                    if (c.getClient().equals(application)) {
+                    if (c.getClient().equals(client)) {
                         auth.setClientSession(c);
                         associated = true;
                         break;
                     }
                 }
                 if (!associated) {
-                    ClientSessionModel clientSession = session.sessions().createClientSession(realm, application);
+                    ClientSessionModel clientSession = session.sessions().createClientSession(realm, client);
                     clientSession.setUserSession(userSession);
                     auth.setClientSession(clientSession);
                 }
@@ -233,8 +199,16 @@ public class AccountService {
         return base;
     }
 
+    public static UriBuilder accountServiceApplicationPage(UriInfo uriInfo) {
+        return accountServiceBaseUrl(uriInfo).path(AccountService.class, "applicationsPage");
+    }
+
     public static UriBuilder accountServiceBaseUrl(UriBuilder base) {
         return base.path(RealmsResource.class).path(RealmsResource.class, "getAccountService");
+    }
+
+    protected Set<String> getValidPaths() {
+        return AccountService.VALID_PATHS;
     }
 
     private Response forwardToPage(String path, AccountPages page) {
@@ -242,10 +216,21 @@ public class AccountService {
             try {
                 require(AccountRoles.MANAGE_ACCOUNT);
             } catch (ForbiddenException e) {
-                return Flows.forms(session, realm, null, uriInfo).setError("No access").createErrorPage();
+                return session.getProvider(LoginFormsProvider.class).setError(Messages.NO_ACCESS).createErrorPage();
             }
 
             setReferrerOnPage();
+
+            String forwardedError = auth.getClientSession().getNote(ACCOUNT_MGMT_FORWARDED_ERROR_NOTE);
+            if (forwardedError != null) {
+                try {
+                    FormMessage errorMessage = JsonSerialization.readValue(forwardedError, FormMessage.class);
+                    account.setError(errorMessage.getMessage(), errorMessage.getParameters());
+                    auth.getClientSession().removeNote(ACCOUNT_MGMT_FORWARDED_ERROR_NOTE);
+                } catch (IOException ioe) {
+                    throw new RuntimeException(ioe);
+                }
+            }
 
             return account.createResponse(page);
         } else {
@@ -317,7 +302,7 @@ public class AccountService {
     @GET
     public Response passwordPage() {
         if (auth != null) {
-            account.setPasswordSet(isPasswordSet(auth.getUser()));
+            account.setPasswordSet(isPasswordSet(session, realm, auth.getUser()));
         }
 
         return forwardToPage("password", AccountPages.PASSWORD);
@@ -358,31 +343,10 @@ public class AccountService {
         return forwardToPage("sessions", AccountPages.SESSIONS);
     }
 
-    /**
-     * Check to see if form post has sessionId hidden field and match it against the session id.
-     *
-     * @param formData
-     */
-    protected void csrfCheck(final MultivaluedMap<String, String> formData) {
-        if (!auth.isCookieAuthenticated()) return;
-        String stateChecker = formData.getFirst("stateChecker");
-        if (!this.stateChecker.equals(stateChecker)) {
-            throw new ForbiddenException();
-        }
-
-    }
-
-    /**
-     * Check to see if form post has sessionId hidden field and match it against the session id.
-     *
-     */
-    protected void csrfCheck(String stateChecker) {
-        if (!auth.isCookieAuthenticated()) return;
-        if (auth.getSession() == null) return;
-        if (!this.stateChecker.equals(stateChecker)) {
-            throw new ForbiddenException();
-        }
-
+    @Path("applications")
+    @GET
+    public Response applicationsPage() {
+        return forwardToPage("applications", AccountPages.APPLICATIONS);
     }
 
     /**
@@ -417,21 +381,39 @@ public class AccountService {
 
         UserModel user = auth.getUser();
 
-        String error = Validation.validateUpdateProfileForm(formData);
-        if (error != null) {
+        List<FormMessage> errors = Validation.validateUpdateProfileForm(realm.isEditUsernameAllowed(), formData);
+        if (errors != null && !errors.isEmpty()) {
             setReferrerOnPage();
-            return account.setError(error).setProfileFormData(formData).createResponse(AccountPages.ACCOUNT);
+            return account.setErrors(errors).setProfileFormData(formData).createResponse(AccountPages.ACCOUNT);
         }
 
         try {
+            if (realm.isEditUsernameAllowed()) {
+                String username = formData.getFirst("username");
+
+                UserModel existing = session.users().getUserByUsername(username, realm);
+                if (existing != null && !existing.getId().equals(user.getId())) {
+                    throw new ModelDuplicateException(Messages.USERNAME_EXISTS);
+                }
+
+                user.setUsername(username);
+            }
             user.setFirstName(formData.getFirst("firstName"));
             user.setLastName(formData.getFirst("lastName"));
 
             String email = formData.getFirst("email");
             String oldEmail = user.getEmail();
             boolean emailChanged = oldEmail != null ? !oldEmail.equals(email) : email != null;
+            if (emailChanged) {
+                UserModel existing = session.users().getUserByEmail(email, realm);
+                if (existing != null && !existing.getId().equals(user.getId())) {
+                    throw new ModelDuplicateException(Messages.EMAIL_EXISTS);
+                }
+            }
 
-            user.setEmail(formData.getFirst("email"));
+            user.setEmail(email);
+
+            AttributeFormDataProcessor.process(formData, realm, user);
 
             event.event(EventType.UPDATE_PROFILE).client(auth.getClient()).user(auth.getUser()).success();
 
@@ -440,10 +422,13 @@ public class AccountService {
                 event.clone().event(EventType.UPDATE_EMAIL).detail(Details.PREVIOUS_EMAIL, oldEmail).detail(Details.UPDATED_EMAIL, email).success();
             }
             setReferrerOnPage();
-            return account.setSuccess("accountUpdated").createResponse(AccountPages.ACCOUNT);
+            return account.setSuccess(Messages.ACCOUNT_UPDATED).createResponse(AccountPages.ACCOUNT);
         } catch (ModelReadOnlyException roe) {
             setReferrerOnPage();
             return account.setError(Messages.READ_ONLY_USER).setProfileFormData(formData).createResponse(AccountPages.ACCOUNT);
+        } catch (ModelDuplicateException mde) {
+            setReferrerOnPage();
+            return account.setError(mde.getMessage()).setProfileFormData(formData).createResponse(AccountPages.ACCOUNT);
         }
     }
 
@@ -459,12 +444,12 @@ public class AccountService {
         csrfCheck(stateChecker);
 
         UserModel user = auth.getUser();
-        user.setTotp(false);
+        user.setOtpEnabled(false);
 
         event.event(EventType.REMOVE_TOTP).client(auth.getClient()).user(auth.getUser()).success();
 
         setReferrerOnPage();
-        return account.setSuccess("successTotpRemoved").createResponse(AccountPages.TOTP);
+        return account.setSuccess(Messages.SUCCESS_TOTP_REMOVED).createResponse(AccountPages.TOTP);
     }
 
 
@@ -479,9 +464,52 @@ public class AccountService {
         csrfCheck(stateChecker);
 
         UserModel user = auth.getUser();
-        session.sessions().removeUserSessions(realm, user);
+        List<UserSessionModel> userSessions = session.sessions().getUserSessions(realm, user);
+        for (UserSessionModel userSession : userSessions) {
+            AuthenticationManager.backchannelLogout(session, realm, userSession, uriInfo, clientConnection, headers, true);
+        }
 
         UriBuilder builder = Urls.accountBase(uriInfo.getBaseUri()).path(AccountService.class, "sessionsPage");
+        String referrer = uriInfo.getQueryParameters().getFirst("referrer");
+        if (referrer != null) {
+            builder.queryParam("referrer", referrer);
+
+        }
+        URI location = builder.build(realm.getName());
+        return Response.seeOther(location).build();
+    }
+
+    @Path("revoke-grant")
+    @POST
+    public Response processRevokeGrant(final MultivaluedMap<String, String> formData) {
+        if (auth == null) {
+            return login("applications");
+        }
+
+        require(AccountRoles.MANAGE_ACCOUNT);
+        csrfCheck(formData);
+
+        String clientId = formData.getFirst("clientId");
+        if (clientId == null) {
+            return account.setError(Messages.CLIENT_NOT_FOUND).createResponse(AccountPages.APPLICATIONS);
+        }
+        ClientModel client = realm.getClientById(clientId);
+        if (client == null) {
+            return account.setError(Messages.CLIENT_NOT_FOUND).createResponse(AccountPages.APPLICATIONS);
+        }
+
+        // Revoke grant in UserModel
+        UserModel user = auth.getUser();
+        user.revokeConsentForClient(client.getId());
+        new UserSessionManager(session).revokeOfflineToken(user, client);
+
+        // Logout clientSessions for this user and client
+        AuthenticationManager.backchannelUserFromClient(session, realm, user, client, uriInfo, headers);
+
+        event.event(EventType.REVOKE_GRANT).client(auth.getClient()).user(auth.getUser()).detail(Details.REVOKED_CLIENT, client.getClientId()).success();
+        setReferrerOnPage();
+
+        UriBuilder builder = Urls.accountBase(uriInfo.getBaseUri()).path(AccountService.class, "applicationsPage");
         String referrer = uriInfo.getQueryParameters().getFirst("referrer");
         if (referrer != null) {
             builder.queryParam("referrer", referrer);
@@ -525,25 +553,31 @@ public class AccountService {
         String totp = formData.getFirst("totp");
         String totpSecret = formData.getFirst("totpSecret");
 
-        if (Validation.isEmpty(totp)) {
+        if (Validation.isBlank(totp)) {
             setReferrerOnPage();
             return account.setError(Messages.MISSING_TOTP).createResponse(AccountPages.TOTP);
-        } else if (!new TimeBasedOTP().validate(totp, totpSecret.getBytes())) {
+        } else if (!CredentialValidation.validOTP(realm, totp, totpSecret)) {
             setReferrerOnPage();
             return account.setError(Messages.INVALID_TOTP).createResponse(AccountPages.TOTP);
         }
 
         UserCredentialModel credentials = new UserCredentialModel();
-        credentials.setType(CredentialRepresentation.TOTP);
+        credentials.setType(realm.getOTPPolicy().getType());
         credentials.setValue(totpSecret);
         session.users().updateCredential(realm, user, credentials);
 
-        user.setTotp(true);
+        user.setOtpEnabled(true);
+
+        // to update counter
+        UserCredentialModel cred = new UserCredentialModel();
+        cred.setType(realm.getOTPPolicy().getType());
+        cred.setValue(totp);
+        session.users().validCredentials(session, realm, user, cred);
 
         event.event(EventType.UPDATE_TOTP).client(auth.getClient()).user(auth.getUser()).success();
 
         setReferrerOnPage();
-        return account.setSuccess("successTotp").createResponse(AccountPages.TOTP);
+        return account.setSuccess(Messages.SUCCESS_TOTP).createResponse(AccountPages.TOTP);
     }
 
     /**
@@ -568,16 +602,10 @@ public class AccountService {
 
         require(AccountRoles.MANAGE_ACCOUNT);
 
-        String action = formData.getFirst("submitAction");
-        if (action != null && action.equals("Cancel")) {
-            setReferrerOnPage();
-            return account.createResponse(AccountPages.PASSWORD);
-        }
-
         csrfCheck(formData);
         UserModel user = auth.getUser();
 
-        boolean requireCurrent = isPasswordSet(user);
+        boolean requireCurrent = isPasswordSet(session, realm, user);
         account.setPasswordSet(requireCurrent);
 
         String password = formData.getFirst("password");
@@ -585,19 +613,19 @@ public class AccountService {
         String passwordConfirm = formData.getFirst("password-confirm");
 
         if (requireCurrent) {
-            if (Validation.isEmpty(password)) {
+            if (Validation.isBlank(password)) {
                 setReferrerOnPage();
                 return account.setError(Messages.MISSING_PASSWORD).createResponse(AccountPages.PASSWORD);
             }
 
             UserCredentialModel cred = UserCredentialModel.password(password);
-            if (!session.users().validCredentials(realm, user, cred)) {
+            if (!session.users().validCredentials(session, realm, user, cred)) {
                 setReferrerOnPage();
                 return account.setError(Messages.INVALID_PASSWORD_EXISTING).createResponse(AccountPages.PASSWORD);
             }
         }
 
-        if (Validation.isEmpty(passwordNew)) {
+        if (Validation.isBlank(passwordNew)) {
             setReferrerOnPage();
             return account.setError(Messages.MISSING_PASSWORD).createResponse(AccountPages.PASSWORD);
         }
@@ -612,8 +640,12 @@ public class AccountService {
         } catch (ModelReadOnlyException mre) {
             setReferrerOnPage();
             return account.setError(Messages.READ_ONLY_PASSWORD).createResponse(AccountPages.PASSWORD);
-        } catch (Exception ape) {
-            logger.error("Failed to update password", ape);
+        }catch (ModelException me) {
+            logger.failedToUpdatePassword(me);
+            setReferrerOnPage();
+            return account.setError(me.getMessage(), me.getParameters()).createResponse(AccountPages.PASSWORD);
+        }catch (Exception ape) {
+            logger.failedToUpdatePassword(ape);
             setReferrerOnPage();
             return account.setError(ape.getMessage()).createResponse(AccountPages.PASSWORD);
         }
@@ -621,15 +653,14 @@ public class AccountService {
         List<UserSessionModel> sessions = session.sessions().getUserSessions(realm, user);
         for (UserSessionModel s : sessions) {
             if (!s.getId().equals(auth.getSession().getId())) {
-                new ResourceAdminManager().logoutSession(uriInfo.getRequestUri(), realm, s);
-                session.sessions().removeUserSession(realm, s);
+                AuthenticationManager.backchannelLogout(session, realm, s, uriInfo, clientConnection, headers, true);
             }
         }
 
         event.event(EventType.UPDATE_PASSWORD).client(auth.getClient()).user(auth.getUser()).success();
 
         setReferrerOnPage();
-        return account.setPasswordSet(true).setSuccess("accountPasswordUpdated").createResponse(AccountPages.PASSWORD);
+        return account.setPasswordSet(true).setSuccess(Messages.ACCOUNT_PASSWORD_UPDATED).createResponse(AccountPages.PASSWORD);
     }
 
     @Path("federated-identity-update")
@@ -638,7 +669,7 @@ public class AccountService {
                                                    @QueryParam("provider_id") String providerId,
                                                    @QueryParam("stateChecker") String stateChecker) {
         if (auth == null) {
-            return login("broker");
+            return login("identity");
         }
 
         require(AccountRoles.MANAGE_ACCOUNT);
@@ -658,7 +689,7 @@ public class AccountService {
         boolean hasProvider = false;
 
         for (IdentityProviderModel model : realm.getIdentityProviders()) {
-            if (model.getId().equals(providerId)) {
+            if (model.getAlias().equals(providerId)) {
                 hasProvider = true;
             }
         }
@@ -675,24 +706,18 @@ public class AccountService {
 
         switch (accountSocialAction) {
             case ADD:
-                String redirectUri = UriBuilder.fromUri(Urls.accountSocialPage(uriInfo.getBaseUri(), realm.getName())).build().toString();
+                String redirectUri = UriBuilder.fromUri(Urls.accountFederatedIdentityPage(uriInfo.getBaseUri(), realm.getName())).build().toString();
 
                 try {
                     ClientSessionModel clientSession = auth.getClientSession();
-                    clientSession.setAction(ClientSessionModel.Action.AUTHENTICATE);
-                    clientSession.setRedirectUri(redirectUri);
-                    clientSession.setNote(OpenIDConnect.STATE_PARAM, UUID.randomUUID().toString());
-                    clientSession.setNote(ClientSessionCode.ACTION_KEY, KeycloakModelUtils.generateCodeSecret());
                     ClientSessionCode clientSessionCode = new ClientSessionCode(realm, clientSession);
+                    clientSessionCode.setAction(ClientSessionModel.Action.AUTHENTICATE.name());
+                    clientSession.setRedirectUri(redirectUri);
+                    clientSession.setNote(OIDCLoginProtocol.STATE_PARAM, UUID.randomUUID().toString());
 
-                    URI url = UriBuilder.fromUri(this.uriInfo.getBaseUri())
-                            .path(AuthenticationBrokerResource.class)
-                            .path(AuthenticationBrokerResource.class, "performLogin")
-                            .queryParam("provider_id", providerId)
-                            .queryParam("code", clientSessionCode.getCode())
-                            .build(this.realm.getName());
-
-                    return Response.temporaryRedirect(url).build();
+                    return Response.temporaryRedirect(
+                            Urls.identityProviderAuthnRequest(this.uriInfo.getBaseUri(), providerId, realm.getName(), clientSessionCode.getCode()))
+                            .build();
                 } catch (Exception spe) {
                     setReferrerOnPage();
                     return account.setError(Messages.IDENTITY_PROVIDER_REDIRECT_ERROR).createResponse(AccountPages.FEDERATED_IDENTITY);
@@ -702,13 +727,15 @@ public class AccountService {
                 if (link != null) {
 
                     // Removing last social provider is not possible if you don't have other possibility to authenticate
-                    if (session.users().getFederatedIdentities(user, realm).size() > 1 || user.getFederationLink() != null || isPasswordSet(user)) {
+                    if (session.users().getFederatedIdentities(user, realm).size() > 1 || user.getFederationLink() != null || isPasswordSet(session, realm, user)) {
                         session.users().removeFederatedIdentity(realm, user, providerId);
 
                         logger.debugv("Social provider {0} removed successfully from user {1}", providerId, user.getUsername());
 
                         event.event(EventType.REMOVE_FEDERATED_IDENTITY).client(auth.getClient()).user(auth.getUser())
-                                .detail(Details.USERNAME, link.getUserId() + "@" + link.getIdentityProvider())
+                                .detail(Details.USERNAME, auth.getUser().getUsername())
+                                .detail(Details.IDENTITY_PROVIDER, link.getIdentityProvider())
+                                .detail(Details.IDENTITY_PROVIDER_USERNAME, link.getUserName())
                                 .success();
 
                         setReferrerOnPage();
@@ -730,84 +757,30 @@ public class AccountService {
         return RealmsResource.accountUrl(base).path(AccountService.class, "loginRedirect");
     }
 
-    @Path("login-redirect")
-    @GET
-    public Response loginRedirect(@QueryParam("code") String code,
-                                  @QueryParam("state") String state,
-                                  @QueryParam("error") String error,
-                                  @QueryParam("path") String path,
-                                  @QueryParam("referrer") String referrer,
-                                  @Context HttpHeaders headers) {
-        try {
-            if (error != null) {
-                logger.debug("error from oauth");
-                throw new ForbiddenException("error");
-            }
-            if (path != null && !VALID_PATHS.contains(path)) {
-                throw new BadRequestException("Invalid path");
-            }
-            if (!realm.isEnabled()) {
-                logger.debug("realm not enabled");
-                throw new ForbiddenException();
-            }
-            if (!application.isEnabled()) {
-                logger.debug("account management app not enabled");
-                throw new ForbiddenException();
-            }
-            if (code == null) {
-                logger.debug("code not specified");
-                throw new BadRequestException("code not specified");
-            }
-            if (state == null) {
-                logger.debug("state not specified");
-                throw new BadRequestException("state not specified");
-            }
-
-            URI accountUri = Urls.accountBase(uriInfo.getBaseUri()).path("/").build(realm.getName());
-            URI redirectUri = path != null ? accountUri.resolve(path) : accountUri;
-            if (referrer != null) {
-                redirectUri = redirectUri.resolve("?referrer=" + referrer);
-            }
-
-            return Response.status(302).location(redirectUri).build();
-        } finally {
-        }
+    @Override
+    protected URI getBaseRedirectUri() {
+        return Urls.accountBase(uriInfo.getBaseUri()).path("/").build(realm.getName());
     }
 
-    private Response login(String path) {
-        OAuthRedirect oauth = new OAuthRedirect();
-        String authUrl = OpenIDConnectService.loginPageUrl(uriInfo).build(realm.getName()).toString();
-        oauth.setAuthUrl(authUrl);
-
-        oauth.setClientId(Constants.ACCOUNT_MANAGEMENT_APP);
-
-        UriBuilder uriBuilder = Urls.accountPageBuilder(uriInfo.getBaseUri()).path(AccountService.class, "loginRedirect");
-
-        if (path != null) {
-            uriBuilder.queryParam("path", path);
-        }
-
-        String referrer = uriInfo.getQueryParameters().getFirst("referrer");
-        if (referrer != null) {
-            uriBuilder.queryParam("referrer", referrer);
-        }
-
-        String referrerUri = uriInfo.getQueryParameters().getFirst("referrer_uri");
-        if (referrerUri != null) {
-            uriBuilder.queryParam("referrer_uri", referrerUri);
-        }
-
-        URI accountUri = uriBuilder.build(realm.getName());
-
-        oauth.setStateCookiePath(accountUri.getRawPath());
-        return oauth.redirect(uriInfo, accountUri.toString());
-    }
-
-    public static boolean isPasswordSet(UserModel user) {
+    public static boolean isPasswordSet(KeycloakSession session, RealmModel realm, UserModel user) {
         boolean passwordSet = false;
 
+        // See if password is set for user on linked UserFederationProvider
         if (user.getFederationLink() != null) {
-            passwordSet = true;
+
+            UserFederationProvider federationProvider = null;
+            for (UserFederationProviderModel fedProviderModel : realm.getUserFederationProviders()) {
+                if (fedProviderModel.getId().equals(user.getFederationLink())) {
+                    federationProvider = KeycloakModelUtils.getFederationProviderInstance(session, fedProviderModel);
+                }
+            }
+
+            if (federationProvider != null) {
+                Set<String> supportedCreds = federationProvider.getSupportedCredentialTypes(user);
+                if (supportedCreds.contains(UserCredentialModel.PASSWORD)) {
+                    passwordSet = true;
+                }
+            }
         }
 
         for (UserCredentialValueModel c : user.getCredentialsDirectly()) {
@@ -826,21 +799,21 @@ public class AccountService {
 
         String referrerUri = uriInfo.getQueryParameters().getFirst("referrer_uri");
 
-        ApplicationModel application = realm.getApplicationByName(referrer);
-        if (application != null) {
+        ClientModel referrerClient = realm.getClientByClientId(referrer);
+        if (referrerClient != null) {
             if (referrerUri != null) {
-                referrerUri = OpenIDConnectService.verifyRedirectUri(uriInfo, referrerUri, realm, application);
+                referrerUri = RedirectUtils.verifyRedirectUri(uriInfo, referrerUri, realm, referrerClient);
             } else {
-                referrerUri = ResolveRelative.resolveRelativeUri(uriInfo.getRequestUri(), application.getBaseUrl());
+                referrerUri = ResolveRelative.resolveRelativeUri(uriInfo.getRequestUri(), client.getRootUrl(), referrerClient.getBaseUrl());
             }
 
             if (referrerUri != null) {
                 return new String[]{referrer, referrerUri};
             }
         } else if (referrerUri != null) {
-            ClientModel client = realm.getOAuthClient(referrer);
+            referrerClient = realm.getClientByClientId(referrer);
             if (client != null) {
-                referrerUri = OpenIDConnectService.verifyRedirectUri(uriInfo, referrerUri, realm, application);
+                referrerUri = RedirectUtils.verifyRedirectUri(uriInfo, referrerUri, realm, referrerClient);
 
                 if (referrerUri != null) {
                     return new String[]{referrer, referrerUri};
@@ -856,7 +829,7 @@ public class AccountService {
             throw new ForbiddenException();
         }
 
-        if (!auth.hasAppRole(application, role)) {
+        if (!auth.hasClientRole(client, role)) {
             throw new ForbiddenException();
         }
     }
@@ -866,7 +839,7 @@ public class AccountService {
             throw new ForbiddenException();
         }
 
-        if (!auth.hasOneOfAppRole(application, roles)) {
+        if (!auth.hasOneOfAppRole(client, roles)) {
             throw new ForbiddenException();
         }
     }
@@ -885,5 +858,4 @@ public class AccountService {
             }
         }
     }
-
 }

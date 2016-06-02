@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.testsuite.jaxrs;
 
 import java.util.Map;
@@ -23,7 +40,7 @@ import org.keycloak.TokenIdGenerator;
 import org.keycloak.adapters.CorsHeaders;
 import org.keycloak.constants.AdapterConstants;
 import org.keycloak.adapters.HttpClientBuilder;
-import org.keycloak.models.ApplicationModel;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserModel;
@@ -35,7 +52,7 @@ import org.keycloak.testsuite.OAuthClient;
 import org.keycloak.testsuite.rule.KeycloakRule;
 import org.keycloak.testsuite.rule.WebResource;
 import org.keycloak.testsuite.rule.WebRule;
-import org.keycloak.util.Time;
+import org.keycloak.common.util.Time;
 import org.openqa.selenium.WebDriver;
 
 /**
@@ -53,7 +70,7 @@ public class JaxrsFilterTest {
 
         @Override
         public void config(RealmManager manager, RealmModel adminstrationRealm, RealmModel appRealm) {
-            ApplicationModel app = appRealm.addApplication("jaxrs-app");
+            ClientModel app = appRealm.addClient("jaxrs-app");
             app.setEnabled(true);
             RoleModel role = app.addRole("jaxrs-app-user");
             UserModel user = manager.getSession().users().getUserByUsername("test-user@localhost", appRealm);

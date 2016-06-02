@@ -3,7 +3,7 @@
 <%@ page import="org.keycloak.constants.ServiceUrlConstants" %>
 <%@ page import="org.keycloak.example.CustomerDatabaseClient" %>
 <%@ page import="org.keycloak.representations.IDToken" %>
-<%@ page import="org.keycloak.util.KeycloakUriBuilder" %>
+<%@ page import="org.keycloak.common.util.KeycloakUriBuilder" %>
 <%@ page session="false" %>
 <html>
 <head>
@@ -33,7 +33,7 @@ Servlet User Principal <b><%=request.getUserPrincipal().getName()%>
     try {
         list = CustomerDatabaseClient.getCustomers(request);
     } catch (CustomerDatabaseClient.Failure failure) {
-        out.println("There was a failure processing request.  You either didn't configure Keycloak properly, or maybe" +
+        out.println("There was a failure processing request.  You either didn't configure Keycloak properly, or maybe " +
                 "you just forgot to secure the database service?");
         out.println("Status from database service invocation was: " + failure.getStatus());
         return;

@@ -1,3 +1,20 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak;
 
 import junit.framework.Assert;
@@ -7,9 +24,11 @@ import org.bouncycastle.x509.X509V1CertificateGenerator;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.keycloak.common.VerificationException;
 import org.keycloak.jose.jws.JWSBuilder;
 import org.keycloak.representations.AccessToken;
-import org.keycloak.util.Time;
+import org.keycloak.common.util.Time;
+import org.keycloak.util.TokenUtil;
 
 import javax.security.auth.x500.X500Principal;
 import java.io.IOException;
@@ -71,8 +90,9 @@ public class RSAVerifierTest {
     public void initTest() {
 
         token = new AccessToken();
-        token.subject("CN=Client")
-                .issuer("domain")
+        token.type(TokenUtil.TOKEN_TYPE_BEARER)
+                .subject("CN=Client")
+                .issuer("http://localhost:8080/auth/realm")
                 .addAccess("service").addRole("admin");
     }
 
@@ -96,13 +116,14 @@ public class RSAVerifierTest {
         String encoded = new JWSBuilder()
                 .jsonContent(token)
                 .rsa256(idpPair.getPrivate());
+        System.out.print("encoded size: " + encoded.length());
         AccessToken token = verifySkeletonKeyToken(encoded);
         Assert.assertTrue(token.getResourceAccess("service").getRoles().contains("admin"));
         Assert.assertEquals("CN=Client", token.getSubject());
     }
 
     private AccessToken verifySkeletonKeyToken(String encoded) throws VerificationException {
-        return RSATokenVerifier.verifyToken(encoded, idpPair.getPublic(), "domain");
+        return RSATokenVerifier.verifyToken(encoded, idpPair.getPublic(), "http://localhost:8080/auth/realm");
     }
 
    /*

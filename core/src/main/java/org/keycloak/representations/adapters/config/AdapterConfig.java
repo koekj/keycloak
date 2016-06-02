@@ -1,7 +1,24 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.representations.adapters.config;
 
-import org.codehaus.jackson.annotate.JsonProperty;
-import org.codehaus.jackson.annotate.JsonPropertyOrder;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
 /**
  * Configuration for Java based adapters
@@ -17,8 +34,9 @@ import org.codehaus.jackson.annotate.JsonPropertyOrder;
         "connection-pool-size",
         "allow-any-hostname", "disable-trust-manager", "truststore", "truststore-password",
         "client-keystore", "client-keystore-password", "client-key-password",
-        "auth-server-url-for-backend-requests", "always-refresh-token",
-        "register-node-at-startup", "register-node-period", "token-store", "principal-attribute"
+        "always-refresh-token",
+        "register-node-at-startup", "register-node-period", "token-store", "principal-attribute",
+        "proxy-url"
 })
 public class AdapterConfig extends BaseAdapterConfig {
 
@@ -38,8 +56,6 @@ public class AdapterConfig extends BaseAdapterConfig {
     protected String clientKeyPassword;
     @JsonProperty("connection-pool-size")
     protected int connectionPoolSize = 20;
-    @JsonProperty("auth-server-url-for-backend-requests")
-    protected String authServerUrlForBackendRequests;
     @JsonProperty("always-refresh-token")
     protected boolean alwaysRefreshToken = false;
     @JsonProperty("register-node-at-startup")
@@ -50,6 +66,14 @@ public class AdapterConfig extends BaseAdapterConfig {
     protected String tokenStore;
     @JsonProperty("principal-attribute")
     protected String principalAttribute;
+    @JsonProperty("turn-off-change-session-id-on-login")
+    protected Boolean turnOffChangeSessionIdOnLogin;
+
+    /**
+     * The Proxy url to use for requests to the auth-server, configurable via the adapter config property {@code proxy-url}.
+     */
+    @JsonProperty("proxy-url")
+    protected String proxyUrl;
 
     public boolean isAllowAnyHostname() {
         return allowAnyHostname;
@@ -115,14 +139,6 @@ public class AdapterConfig extends BaseAdapterConfig {
         this.connectionPoolSize = connectionPoolSize;
     }
 
-    public String getAuthServerUrlForBackendRequests() {
-        return authServerUrlForBackendRequests;
-    }
-
-    public void setAuthServerUrlForBackendRequests(String authServerUrlForBackendRequests) {
-        this.authServerUrlForBackendRequests = authServerUrlForBackendRequests;
-    }
-
     public boolean isAlwaysRefreshToken() {
         return alwaysRefreshToken;
     }
@@ -161,5 +177,21 @@ public class AdapterConfig extends BaseAdapterConfig {
 
     public void setPrincipalAttribute(String principalAttribute) {
         this.principalAttribute = principalAttribute;
+    }
+
+    public Boolean getTurnOffChangeSessionIdOnLogin() {
+        return turnOffChangeSessionIdOnLogin;
+    }
+
+    public void setTurnOffChangeSessionIdOnLogin(Boolean turnOffChangeSessionIdOnLogin) {
+        this.turnOffChangeSessionIdOnLogin = turnOffChangeSessionIdOnLogin;
+    }
+
+    public String getProxyUrl() {
+        return proxyUrl;
+    }
+
+    public void setProxyUrl(String proxyUrl) {
+        this.proxyUrl = proxyUrl;
     }
 }

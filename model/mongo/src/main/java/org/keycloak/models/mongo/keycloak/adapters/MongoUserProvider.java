@@ -1,20 +1,43 @@
+/*
+ * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.keycloak.models.mongo.keycloak.adapters;
 
 import com.mongodb.BasicDBObject;
 import com.mongodb.DBObject;
 import com.mongodb.QueryBuilder;
+
 import org.keycloak.connections.mongo.api.MongoStore;
 import org.keycloak.connections.mongo.api.context.MongoStoreInvocationContext;
-import org.keycloak.models.ApplicationModel;
-import org.keycloak.models.KeycloakSession;
-import org.keycloak.models.RealmModel;
-import org.keycloak.models.RoleModel;
+import org.keycloak.models.ClientModel;
+import org.keycloak.models.CredentialValidationOutput;
 import org.keycloak.models.FederatedIdentityModel;
+import org.keycloak.models.GroupModel;
+import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.ProtocolMapperModel;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.RequiredActionProviderModel;
+import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserFederationProviderModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserProvider;
 import org.keycloak.models.entities.FederatedIdentityEntity;
+import org.keycloak.models.mongo.keycloak.entities.MongoUserConsentEntity;
 import org.keycloak.models.mongo.keycloak.entities.MongoUserEntity;
 import org.keycloak.models.utils.CredentialValidation;
 
@@ -33,21 +56,18 @@ public class MongoUserProvider implements UserProvider {
 
     private final MongoStoreInvocationContext invocationContext;
     private final KeycloakSession session;
-    private final MongoStore mongoStore;
 
-    public MongoUserProvider(KeycloakSession session, MongoStore mongoStore, MongoStoreInvocationContext invocationContext) {
+    public MongoUserProvider(KeycloakSession session, MongoStoreInvocationContext invocationContext) {
         this.session = session;
-        this.mongoStore = mongoStore;
         this.invocationContext = invocationContext;
     }
 
     @Override
     public void close() {
-        // TODO
     }
 
     @Override
-    public UserModel getUserById(String id, RealmModel realm) {
+    public UserAdapter getUserById(String id, RealmModel realm) {
         MongoUserEntity user = getMongoStore().loadEntity(MongoUserEntity.class, id, invocationContext);
 
         // Check that it's user from this realm
@@ -61,7 +81,7 @@ public class MongoUserProvider implements UserProvider {
     @Override
     public UserModel getUserByUsername(String username, RealmModel realm) {
         DBObject query = new QueryBuilder()
-                .and("username").is(username)
+                .and("username").is(username.toLowerCase())
                 .and("realmId").is(realm.getId())
                 .get();
         MongoUserEntity user = getMongoStore().loadSingleEntity(MongoUserEntity.class, query, invocationContext);
@@ -76,7 +96,7 @@ public class MongoUserProvider implements UserProvider {
     @Override
     public UserModel getUserByEmail(String email, RealmModel realm) {
         DBObject query = new QueryBuilder()
-                .and("email").is(email)
+                .and("email").is(email.toLowerCase())
                 .and("realmId").is(realm.getId())
                 .get();
         MongoUserEntity user = getMongoStore().loadSingleEntity(MongoUserEntity.class, query, invocationContext);
@@ -88,8 +108,24 @@ public class MongoUserProvider implements UserProvider {
         }
     }
 
+    @Override
+    public List<UserModel> getGroupMembers(RealmModel realm, GroupModel group, int firstResult, int maxResults) {
+        QueryBuilder queryBuilder = new QueryBuilder()
+                .and("realmId").is(realm.getId());
+        queryBuilder.and("groupIds").is(group.getId());
+        DBObject sort = new BasicDBObject("username", 1);
+
+        List<MongoUserEntity> users = getMongoStore().loadEntities(MongoUserEntity.class, queryBuilder.get(), sort, firstResult, maxResults, invocationContext);
+        return convertUserEntities(realm, users);
+    }
+
     protected MongoStore getMongoStore() {
         return invocationContext.getMongoStore();
+    }
+
+    @Override
+    public List<UserModel> getGroupMembers(RealmModel realm, GroupModel group) {
+        return getGroupMembers(realm, group, -1, -1);
     }
 
     @Override
@@ -103,6 +139,16 @@ public class MongoUserProvider implements UserProvider {
         return userEntity == null ? null : new UserAdapter(session, realm, userEntity, invocationContext);
     }
 
+    @Override
+    public UserModel getUserByServiceAccountClient(ClientModel client) {
+        DBObject query = new QueryBuilder()
+                .and("serviceAccountClientLink").is(client.getId())
+                .and("realmId").is(client.getRealm().getId())
+                .get();
+        MongoUserEntity userEntity = getMongoStore().loadSingleEntity(MongoUserEntity.class, query, invocationContext);
+        return userEntity == null ? null : new UserAdapter(session, client.getRealm(), userEntity, invocationContext);
+    }
+
     protected List<UserModel> convertUserEntities(RealmModel realm, List<MongoUserEntity> userEntities) {
         List<UserModel> userModels = new ArrayList<UserModel>();
         for (MongoUserEntity user : userEntities) {
@@ -113,8 +159,8 @@ public class MongoUserProvider implements UserProvider {
 
 
     @Override
-    public List<UserModel> getUsers(RealmModel realm) {
-        return getUsers(realm, -1, -1);
+    public List<UserModel> getUsers(RealmModel realm, boolean includeServiceAccounts) {
+        return getUsers(realm, -1, -1, includeServiceAccounts);
     }
 
     @Override
@@ -126,10 +172,15 @@ public class MongoUserProvider implements UserProvider {
     }
 
     @Override
-    public List<UserModel> getUsers(RealmModel realm, int firstResult, int maxResults) {
-        DBObject query = new QueryBuilder()
-                .and("realmId").is(realm.getId())
-                .get();
+    public List<UserModel> getUsers(RealmModel realm, int firstResult, int maxResults, boolean includeServiceAccounts) {
+        QueryBuilder queryBuilder = new QueryBuilder()
+                .and("realmId").is(realm.getId());
+
+        if (!includeServiceAccounts) {
+            queryBuilder = queryBuilder.and("serviceAccountClientLink").is(null);
+        }
+
+        DBObject query = queryBuilder.get();
         DBObject sort = new BasicDBObject("username", 1);
         List<MongoUserEntity> users = getMongoStore().loadEntities(MongoUserEntity.class, query, sort, firstResult, maxResults, invocationContext);
         return convertUserEntities(realm, users);
@@ -168,6 +219,7 @@ public class MongoUserProvider implements UserProvider {
 
         QueryBuilder builder = new QueryBuilder().and(
                 new QueryBuilder().and("realmId").is(realm.getId()).get(),
+                new QueryBuilder().and("serviceAccountClientLink").is(null).get(),
                 new QueryBuilder().or(
                         new QueryBuilder().put("username").regex(caseInsensitivePattern).get(),
                         new QueryBuilder().put("email").regex(caseInsensitivePattern).get(),
@@ -213,10 +265,20 @@ public class MongoUserProvider implements UserProvider {
     }
 
     @Override
+    public List<UserModel> searchForUserByUserAttribute(String attrName, String attrValue, RealmModel realm) {
+        QueryBuilder queryBuilder = new QueryBuilder()
+                .and("realmId").is(realm.getId());
+        queryBuilder.and("attributes." + attrName).is(attrValue);
+
+        List<MongoUserEntity> users = getMongoStore().loadEntities(MongoUserEntity.class, queryBuilder.get(), invocationContext);
+        return convertUserEntities(realm, users);
+    }
+
+    @Override
     public Set<FederatedIdentityModel> getFederatedIdentities(UserModel userModel, RealmModel realm) {
-        UserModel user = getUserById(userModel.getId(), realm);
-        MongoUserEntity userEntity = ((UserAdapter) user).getUser();
-        List<FederatedIdentityEntity> linkEntities = userEntity.getSocialLinks();
+        UserAdapter user = getUserById(userModel.getId(), realm);
+        MongoUserEntity userEntity = user.getUser();
+        List<FederatedIdentityEntity> linkEntities = userEntity.getFederatedIdentities();
 
         if (linkEntities == null) {
             return Collections.EMPTY_SET;
@@ -225,50 +287,49 @@ public class MongoUserProvider implements UserProvider {
         Set<FederatedIdentityModel> result = new HashSet<FederatedIdentityModel>();
         for (FederatedIdentityEntity federatedIdentityEntity : linkEntities) {
             FederatedIdentityModel model = new FederatedIdentityModel(federatedIdentityEntity.getIdentityProvider(),
-                    federatedIdentityEntity.getUserId(), federatedIdentityEntity.getUserName());
+                    federatedIdentityEntity.getUserId(), federatedIdentityEntity.getUserName(), federatedIdentityEntity.getToken());
             result.add(model);
         }
         return result;
     }
 
-    private FederatedIdentityEntity findSocialLink(UserModel userModel, String socialProvider, RealmModel realm) {
-        UserModel user = getUserById(userModel.getId(), realm);
-        MongoUserEntity userEntity = ((UserAdapter) user).getUser();
-        List<FederatedIdentityEntity> linkEntities = userEntity.getSocialLinks();
-        if (linkEntities == null) {
-            return null;
-        }
-
-        for (FederatedIdentityEntity federatedIdentityEntity : linkEntities) {
-            if (federatedIdentityEntity.getIdentityProvider().equals(socialProvider)) {
-                return federatedIdentityEntity;
-            }
-        }
-        return null;
-    }
-
-
     @Override
     public FederatedIdentityModel getFederatedIdentity(UserModel user, String socialProvider, RealmModel realm) {
-        FederatedIdentityEntity federatedIdentityEntity = findSocialLink(user, socialProvider, realm);
-        return federatedIdentityEntity != null ? new FederatedIdentityModel(federatedIdentityEntity.getIdentityProvider(), federatedIdentityEntity.getUserId(), federatedIdentityEntity.getUserName()) : null;
+        UserAdapter mongoUser = getUserById(user.getId(), realm);
+        MongoUserEntity userEntity = mongoUser.getUser();
+        FederatedIdentityEntity federatedIdentityEntity = findFederatedIdentityLink(userEntity, socialProvider);
+
+        return federatedIdentityEntity != null ? new FederatedIdentityModel(federatedIdentityEntity.getIdentityProvider(), federatedIdentityEntity.getUserId(),
+                federatedIdentityEntity.getUserName(), federatedIdentityEntity.getToken()) : null;
     }
 
     @Override
-    public UserAdapter addUser(RealmModel realm, String id, String username, boolean addDefaultRoles) {
-        UserAdapter userModel = addUserEntity(realm, id, username);
+    public UserAdapter addUser(RealmModel realm, String id, String username, boolean addDefaultRoles, boolean addDefaultRequiredActions) {
+        UserAdapter userModel = addUserEntity(realm, id, username.toLowerCase());
 
         if (addDefaultRoles) {
             for (String r : realm.getDefaultRoles()) {
                 userModel.grantRole(realm.getRole(r));
             }
 
-            for (ApplicationModel application : realm.getApplications()) {
+            for (ClientModel application : realm.getClients()) {
                 for (String r : application.getDefaultRoles()) {
                     userModel.grantRole(application.getRole(r));
                 }
             }
+            for (GroupModel g : realm.getDefaultGroups()) {
+                userModel.joinGroup(g);
+            }
         }
+
+        if (addDefaultRequiredActions) {
+            for (RequiredActionProviderModel r : realm.getRequiredActionProviders()) {
+                if (r.isEnabled() && r.isDefaultAction()) {
+                    userModel.addRequiredAction(r.getAlias());
+                }
+            }
+        }
+
 
         return userModel;
     }
@@ -277,6 +338,7 @@ public class MongoUserProvider implements UserProvider {
         MongoUserEntity userEntity = new MongoUserEntity();
         userEntity.setId(id);
         userEntity.setUsername(username);
+        userEntity.setCreatedTimestamp(System.currentTimeMillis());
         // Compatibility with JPA model, which has user disabled by default
         // userEntity.setEnabled(true);
         userEntity.setRealmId(realm.getId());
@@ -287,45 +349,55 @@ public class MongoUserProvider implements UserProvider {
 
     @Override
     public boolean removeUser(RealmModel realm, UserModel user) {
-        DBObject query = new QueryBuilder()
-                .and("_id").is(user.getId())
-                .and("realmId").is(realm.getId())
-                .get();
-        return getMongoStore().removeEntities(MongoUserEntity.class, query, invocationContext);
+        return getMongoStore().removeEntity(MongoUserEntity.class, user.getId(), invocationContext);
     }
 
 
     @Override
-    public void addFederatedIdentity(RealmModel realm, UserModel user, FederatedIdentityModel socialLink) {
-        user = getUserById(user.getId(), realm);
-        MongoUserEntity userEntity = ((UserAdapter) user).getUser();
+    public void addFederatedIdentity(RealmModel realm, UserModel user, FederatedIdentityModel identity) {
+        UserAdapter mongoUser = getUserById(user.getId(), realm);
+        MongoUserEntity userEntity = mongoUser.getUser();
         FederatedIdentityEntity federatedIdentityEntity = new FederatedIdentityEntity();
-        federatedIdentityEntity.setIdentityProvider(socialLink.getIdentityProvider());
-        federatedIdentityEntity.setUserId(socialLink.getUserId());
-        federatedIdentityEntity.setUserName(socialLink.getUserName());
+        federatedIdentityEntity.setIdentityProvider(identity.getIdentityProvider());
+        federatedIdentityEntity.setUserId(identity.getUserId());
+        federatedIdentityEntity.setUserName(identity.getUserName().toLowerCase());
+        federatedIdentityEntity.setToken(identity.getToken());
 
         getMongoStore().pushItemToList(userEntity, "federatedIdentities", federatedIdentityEntity, true, invocationContext);
     }
 
     @Override
+    public void updateFederatedIdentity(RealmModel realm, UserModel federatedUser, FederatedIdentityModel federatedIdentityModel) {
+        UserAdapter mongoUser = getUserById(federatedUser.getId(), realm);
+        MongoUserEntity userEntity = mongoUser.getUser();
+        FederatedIdentityEntity federatedIdentityEntity = findFederatedIdentityLink(userEntity, federatedIdentityModel.getIdentityProvider());
+
+        //pushItemToList updates the whole federatedIdentities array in Mongo so we just need to remove this object from the Java
+        //List and pushItemToList will handle the DB update.
+        userEntity.getFederatedIdentities().remove(federatedIdentityEntity);
+        federatedIdentityEntity.setToken(federatedIdentityModel.getToken());
+        getMongoStore().pushItemToList(userEntity, "federatedIdentities", federatedIdentityEntity, true, invocationContext);
+    }
+
+    @Override
     public boolean removeFederatedIdentity(RealmModel realm, UserModel userModel, String socialProvider) {
-        UserModel user = getUserById(userModel.getId(), realm);
-        MongoUserEntity userEntity = ((UserAdapter) user).getUser();
-        FederatedIdentityEntity federatedIdentityEntity = findSocialLink(userEntity, socialProvider);
+        UserAdapter user = getUserById(userModel.getId(), realm);
+        MongoUserEntity userEntity = user.getUser();
+        FederatedIdentityEntity federatedIdentityEntity = findFederatedIdentityLink(userEntity, socialProvider);
         if (federatedIdentityEntity == null) {
             return false;
         }
         return getMongoStore().pullItemFromList(userEntity, "federatedIdentities", federatedIdentityEntity, invocationContext);
     }
 
-    private FederatedIdentityEntity findSocialLink(MongoUserEntity userEntity, String socialProvider) {
-        List<FederatedIdentityEntity> linkEntities = userEntity.getSocialLinks();
+    private FederatedIdentityEntity findFederatedIdentityLink(MongoUserEntity userEntity, String identityProvider) {
+        List<FederatedIdentityEntity> linkEntities = userEntity.getFederatedIdentities();
         if (linkEntities == null) {
             return null;
         }
 
         for (FederatedIdentityEntity federatedIdentityEntity : linkEntities) {
-            if (federatedIdentityEntity.getIdentityProvider().equals(socialProvider)) {
+            if (federatedIdentityEntity.getIdentityProvider().equals(identityProvider)) {
                 return federatedIdentityEntity;
             }
         }
@@ -334,7 +406,20 @@ public class MongoUserProvider implements UserProvider {
 
     @Override
     public UserModel addUser(RealmModel realm, String username) {
-        return this.addUser(realm, null, username, true);
+        return this.addUser(realm, null, username, true, true);
+    }
+
+    @Override
+    public void grantToAllUsers(RealmModel realm, RoleModel role) {
+        DBObject query = new QueryBuilder()
+                .and("realmId").is(realm.getId())
+                .get();
+
+        DBObject update = new QueryBuilder()
+                .and("$push").is(new BasicDBObject("roleIds", role.getId()))
+                .get();
+
+        int count = getMongoStore().updateEntities(MongoUserEntity.class, query, update, invocationContext);
     }
 
     @Override
@@ -342,31 +427,86 @@ public class MongoUserProvider implements UserProvider {
         DBObject query = new QueryBuilder()
                 .and("realmId").is(realm.getId())
                 .get();
-        getMongoStore().removeEntities(MongoUserEntity.class, query, invocationContext);
+        getMongoStore().removeEntities(MongoUserEntity.class, query, true, invocationContext);
     }
 
     @Override
     public void preRemove(RealmModel realm, UserFederationProviderModel link) {
+        // Remove all users linked with federationProvider and their consents
         DBObject query = new QueryBuilder()
                 .and("realmId").is(realm.getId())
                 .and("federationLink").is(link.getId())
                 .get();
-        getMongoStore().removeEntities(MongoUserEntity.class, query, invocationContext);
+        getMongoStore().removeEntities(MongoUserEntity.class, query, true, invocationContext);
 
+    }
+
+    @Override
+    public void preRemove(RealmModel realm, ClientModel client) {
+        // Remove all role mappings and consents mapped to all roles of this client
+        for (RoleModel role : client.getRoles()) {
+            preRemove(realm, role);
+        }
+
+        // Finally remove all consents of this client
+        DBObject query = new QueryBuilder()
+                .and("clientId").is(client.getId())
+                .get();
+        getMongoStore().removeEntities(MongoUserConsentEntity.class, query, false, invocationContext);
+    }
+
+    @Override
+    public void preRemove(ProtocolMapperModel protocolMapper) {
+        // Remove this protocol mapper from all consents, which has it
+        DBObject query = new QueryBuilder()
+                .and("grantedProtocolMappers").is(protocolMapper.getId())
+                .get();
+        DBObject pull = new BasicDBObject("$pull", query);
+        getMongoStore().updateEntities(MongoUserConsentEntity.class, query, pull, invocationContext);
+    }
+
+    @Override
+    public void preRemove(RealmModel realm, GroupModel group) {
+        // Remove this role from all users, which has it
+        DBObject query = new QueryBuilder()
+                .and("groupIds").is(group.getId())
+                .get();
+
+        DBObject pull = new BasicDBObject("$pull", query);
+        getMongoStore().updateEntities(MongoUserEntity.class, query, pull, invocationContext);
     }
 
     @Override
     public void preRemove(RealmModel realm, RoleModel role) {
-        // todo not sure what to do for this
+        // Remove this role from all users, which has it
+        DBObject query = new QueryBuilder()
+                .and("roleIds").is(role.getId())
+                .get();
+
+        DBObject pull = new BasicDBObject("$pull", query);
+        getMongoStore().updateEntities(MongoUserEntity.class, query, pull, invocationContext);
+
+        // Remove this role from all consents, which has it
+        query = new QueryBuilder()
+                .and("grantedRoles").is(role.getId())
+                .get();
+        pull = new BasicDBObject("$pull", query);
+        getMongoStore().updateEntities(MongoUserConsentEntity.class, query, pull, invocationContext);
     }
 
     @Override
-    public boolean validCredentials(RealmModel realm, UserModel user, List<UserCredentialModel> input) {
-        return CredentialValidation.validCredentials(realm, user, input);
+    public boolean validCredentials(KeycloakSession session, RealmModel realm, UserModel user, List<UserCredentialModel> input) {
+        return CredentialValidation.validCredentials(session, realm, user, input);
     }
 
     @Override
-    public boolean validCredentials(RealmModel realm, UserModel user, UserCredentialModel... input) {
-        return CredentialValidation.validCredentials(realm, user, input);
+    public boolean validCredentials(KeycloakSession session, RealmModel realm, UserModel user, UserCredentialModel... input) {
+        return CredentialValidation.validCredentials(session, realm, user, input);
+    }
+
+    @Override
+    public CredentialValidationOutput validCredentials(KeycloakSession session, RealmModel realm, UserCredentialModel... input) {
+        // Not supported yet
+        return null;
     }
 }
